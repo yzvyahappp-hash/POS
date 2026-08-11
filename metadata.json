@@ -1,0 +1,6 @@
+{
+  "name": "Restaurant POS Dashboard",
+  "description": "Comprehensive Restaurant POS & Management System with Floor Plan, Kitchen Display, Orders, Reservations, Inventory, and Google Sheets Backend integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,333 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --orange: #FF8A00;
+  --orange-light: rgba(255, 138, 0, 0.1);
+  --bg: #F9FAFB;
+  --panel: #FFFFFF;
+  --text: #111827;
+  --text-sec: #6B7280;
+  --border: #E5E7EB;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  --info: #3B82F6;
+}
+
+.dark {
+  --bg: #0B0F17;
+  --panel: #111827;
+  --text: #F9FAFB;
+  --text-sec: #9CA3AF;
+  --border: #1F2937;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+/* Custom Sleek Interface Utility Classes */
+.btn-orange {
+  background-color: var(--orange);
+  color: #ffffff;
+  padding: 10px 20px;
+  border-radius: 12px;
+  border: none;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+}
+
+.btn-orange:hover {
+  background-color: #e07900;
+  box-shadow: 0 4px 12px rgba(255, 138, 0, 0.25);
+}
+
+.stat-card-sleek {
+  background-color: var(--panel);
+  padding: 18px 22px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stat-card-sleek:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.panel-sleek {
+  background-color: var(--panel);
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.nav-item-sleek {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--text-sec);
+  font-weight: 500;
+  margin-bottom: 4px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.nav-item-sleek.active {
+  background-color: var(--orange-light);
+  color: var(--orange);
+  font-weight: 600;
+}
+
+.nav-item-sleek:hover:not(.active) {
+  background-color: rgba(0, 0, 0, 0.03);
+  color: var(--text);
+}
+
+.table-obj-sleek {
+  border-radius: 14px;
+  border: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.table-obj-sleek:hover {
+  transform: scale(1.02);
+}
+
+.table-obj-sleek.occupied {
+  border-color: var(--orange);
+  background-color: var(--orange-light);
+}
+
+.table-obj-sleek.reserved {
+  border-color: var(--info);
+  background-color: rgba(59, 130, 246, 0.06);
+}
+
+.badge-prep-sleek {
+  background-color: #FEF3C7;
+  color: #D97706;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.badge-new-sleek {
+  background-color: #D1FAE5;
+  color: #059669;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Print Optimization Media Queries */
+@media print {
+  /* Page settings */
+  @page {
+    margin: 0;
+    size: auto;
+  }
+
+  /* Reset document root & body for paper printing */
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+  }
+
+  /* Hide non-printable UI elements */
+  .no-print,
+  nav,
+  header,
+  aside,
+  main,
+  button:not(.force-print-button) {
+    display: none !important;
+  }
+
+  /* Reset top-level app wrapper containers */
+  #root,
+  #root > div {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    background: transparent !important;
+    display: block !important;
+  }
+
+  /* Thermal Receipt Modal Overlays Reset for Printing */
+  .thermal-receipt-modal-overlay {
+    position: static !important;
+    inset: auto !important;
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  .thermal-receipt-modal-card {
+    position: static !important;
+    max-height: none !important;
+    height: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+    display: block !important;
+    border-radius: 0 !important;
+  }
+
+  .thermal-receipt-modal-body {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  /* Thermal receipt 80mm printable card */
+  #printable-thermal-receipt {
+    display: block !important;
+    position: relative !important;
+    margin: 0 auto !important;
+    padding: 8px 10px !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    float: none !important;
+  }
+
+  #printable-thermal-receipt * {
+    color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* QR Stand Printing Overrides */
+  .print-qr-modal-overlay,
+  .print-qr-all-modal {
+    position: static !important;
+    background: #ffffff !important;
+    padding: 10px !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  .print-qr-card-wrapper {
+    background: transparent !important;
+    color: #111827 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .print-qr-tent-card {
+    margin: 10px auto !important;
+    padding: 10px 0 !important;
+    background: transparent !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-qr-card-inner {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+  }
+
+  .print-qr-card-inner h4,
+  .print-qr-card-inner p,
+  .print-qr-card-inner span {
+    color: #111827 !important;
+  }
+
+  .print-qr-card-inner .text-\[\#FF8A00\] {
+    color: #FF8A00 !important;
+  }
+
+  .print-qr-stands-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 16px !important;
+  }
+
+  .print-qr-stands-grid > div {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    background: #ffffff !important;
+    border: 1px solid #ccc !important;
+  }
+
+  /* Color preservation & break behavior */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .print-break-inside-avoid {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+}
+
