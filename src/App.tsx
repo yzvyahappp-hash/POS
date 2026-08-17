@@ -430,12 +430,25 @@ export default function App() {
     const saved: MenuItem[] = safeParseLocalStorage('pos_menu', INITIAL_MENU_ITEMS);
     const existingIds = new Set(saved.map(m => m.id));
     const missing = INITIAL_MENU_ITEMS.filter(m => !existingIds.has(m.id));
-    if (missing.length > 0) {
-      const combined = [...saved, ...missing];
-      localStorage.setItem('pos_menu', JSON.stringify(combined));
-      return combined;
-    }
-    return saved;
+    let combined = missing.length > 0 ? [...saved, ...missing] : saved;
+    // Auto-patch known mismatched mock images (e.g. aquarium fish -> crispy calamari rings)
+    combined = combined.map(item => {
+      if (item.id === 'm-2' && (!item.image || item.image.includes('1604908176997'))) {
+        return {
+          ...item,
+          image: 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&w=600&q=80',
+        };
+      }
+      if (item.id === 'm-3' && (!item.image || item.image.includes('1592417817098'))) {
+        return {
+          ...item,
+          image: 'https://images.unsplash.com/photo-1505253716362-afaea1d3d1af?auto=format&fit=crop&w=600&q=80',
+        };
+      }
+      return item;
+    });
+    localStorage.setItem('pos_menu', JSON.stringify(combined));
+    return combined;
   });
 
   const [orders, setOrders] = useState<Order[]>(() => {
