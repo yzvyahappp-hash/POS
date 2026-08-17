@@ -22,9 +22,10 @@ import {
   Search,
   Filter,
   Check,
+  Link2,
 } from 'lucide-react';
 import { PhoneKeypadInput } from './PhoneKeypad';
-import { Reservation, Table, WaitlistItem } from '../types';
+import { Reservation, Table, WaitlistItem, Customer } from '../types';
 import { initialWaitlist } from '../data/mockData';
 import { gasService, formatReservationDate, formatReservationTime } from '../services/gasService';
 import {
@@ -34,16 +35,19 @@ import {
   formatTimeDisplayUTC8,
   TIMEZONE_UTC8,
 } from '../utils/dateUtils';
+import { findExistingCustomer } from '../utils/customerUtils';
 import { useTranslation } from '../i18n/useTranslation';
 
 interface ReservationViewProps {
   reservations: Reservation[];
   tables: Table[];
   waitlist?: WaitlistItem[];
+  customers?: Customer[];
   onAddReservation: (res: Reservation) => void;
   onUpdateReservation?: (res: Reservation) => void;
   onUpdateReservationStatus: (resId: string, status: Reservation['status']) => void;
   onOpenTableOrder?: (table: Table) => void;
+  onUpdateTable?: (table: Table) => void;
   onAddWaitlist?: (item: WaitlistItem) => void;
   onUpdateWaitlist?: (item: WaitlistItem) => void;
 }
@@ -118,10 +122,12 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
   reservations,
   tables,
   waitlist: propsWaitlist,
+  customers,
   onAddReservation,
   onUpdateReservation,
   onUpdateReservationStatus,
   onOpenTableOrder,
+  onUpdateTable,
   onAddWaitlist,
   onUpdateWaitlist,
 }) => {
@@ -155,12 +161,127 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
   const [notes, setNotes] = useState('');
   const [isStaffReviewing, setIsStaffReviewing] = useState<boolean>(false);
 
-  // Form State for Add Waitlist
+  // Form State for Walk-in / Direct Seating Registration
+  const [registrationMode, setRegistrationMode] = useState<'direct_seat' | 'waitlist'>('direct_seat');
+  const [selectedDirectSeatTableIds, setSelectedDirectSeatTableIds] = useState<string[]>([]);
   const [wlName, setWlName] = useState('');
   const [wlPhone, setWlPhone] = useState('');
   const [wlPartySize, setWlPartySize] = useState(2);
   const [wlWaitMinutes, setWlWaitMinutes] = useState(15);
   const [wlNotes, setWlNotes] = useState('');
+
+  // Auto-match existing customer profile
+  const matchedWalkinCustomer = useMemo(() => {
+    if (!customers || customers.length === 0) return null;
+    if (!wlName.trim() && !wlPhone.trim()) return null;
+    return findExistingCustomer(customers, { name: wlName, phone: wlPhone });
+  }, [customers, wlName, wlPhone]);
+
+  // Available tables memo
+  const availableTables = useMemo(() => {
+    return tables.filter(t => t.status === 'Available');
+  }, [tables]);
+
+  // Helper to determine if a table is eligible for the selected party size
+  const getTableEligibility = (tbl: Table, partySize: number) => {
+    if (tbl.status !== 'Available') {
+      return { eligible: false, badge: '🔒 請先清桌' };
+    }
+    const seats = tbl.seats || (tbl as any).capacity || 2;
+
+    if (partySize <= 2) {
+      const has2Seater = availableTables.some(t => (t.seats || (t as any).capacity || 2) <= 2);
+      if (has2Seater) {
+        if (seats <= 2) {
+          return { eligible: true, badge: '✨ 2人專用桌' };
+        } else {
+          return { eligible: false, badge: '🚫 限2人桌 (不給選大桌)' };
+        }
+      } else {
+        if (seats <= 4) {
+          return { eligible: true, badge: '⚡ 彈性開4人桌' };
+        } else {
+          return { eligible: false, badge: '🚫 桌型過大' };
+        }
+      }
+    } else if (partySize === 3 || partySize === 4) {
+      const has4Seater = availableTables.some(t => {
+        const s = t.seats || (t as any).capacity || 2;
+        return s === 4 || s === 3;
+      });
+      if (has4Seater) {
+        if (seats === 4 || seats === 3) {
+          return { eligible: true, badge: '✨ 4人專用桌' };
+        } else {
+          return { eligible: false, badge: '🚫 限選4人桌' };
+        }
+      } else {
+        if (seats >= 4) {
+          return { eligible: true, badge: '⚡ 彈性開大桌' };
+        } else {
+          return { eligible: false, badge: '🚫 座位不足' };
+        }
+      }
+    } else {
+      // 5+ people (e.g., 6 people) -> Multi-select 併桌 mode!
+      return { eligible: true, badge: '🔗 可參與併桌' };
+    }
+  };
+
+  // Calculate total seats of currently selected direct seat tables
+  const selectedTotalCapacity = useMemo(() => {
+    return tables
+      .filter(t => selectedDirectSeatTableIds.includes(t.id))
+      .reduce((sum, t) => sum + (t.seats || (t as any).capacity || 2), 0);
+  }, [tables, selectedDirectSeatTableIds]);
+
+  // Auto-select valid tables when modal opens, mode changes, or party size changes
+  useEffect(() => {
+    if (showWaitlistModal && registrationMode === 'direct_seat') {
+      const pSize = Number(wlPartySize) || 2;
+      if (pSize <= 2) {
+        const match = availableTables.find(t => (t.seats || (t as any).capacity || 2) <= 2) || availableTables[0];
+        setSelectedDirectSeatTableIds(match ? [match.id] : []);
+      } else if (pSize === 3 || pSize === 4) {
+        const match = availableTables.find(t => (t.seats || (t as any).capacity || 2) === 4) || availableTables[0];
+        setSelectedDirectSeatTableIds(match ? [match.id] : []);
+      } else {
+        // 5+ people (e.g. 6 people): Auto select table combination (e.g. 2-seater + 4-seater)
+        let total = 0;
+        const combo: string[] = [];
+        const sorted = [...availableTables].sort((a, b) => (b.seats || 2) - (a.seats || 2));
+        for (const t of sorted) {
+          if (total < pSize) {
+            combo.push(t.id);
+            total += (t.seats || (t as any).capacity || 2);
+          }
+        }
+        setSelectedDirectSeatTableIds(combo.length > 0 ? combo : (availableTables[0] ? [availableTables[0].id] : []));
+      }
+    }
+  }, [showWaitlistModal, registrationMode, wlPartySize, availableTables]);
+
+  // Handle table selection toggle
+  const handleSelectDirectSeatTable = (tbl: Table) => {
+    const pSize = Number(wlPartySize) || 2;
+    const { eligible } = getTableEligibility(tbl, pSize);
+    if (!eligible) return;
+
+    if (pSize >= 5) {
+      // Multi-select併桌 mode for 6+ people
+      setSelectedDirectSeatTableIds(prev => {
+        if (prev.includes(tbl.id)) {
+          if (prev.length === 1) return prev; // Keep at least 1 table selected
+          return prev.filter(id => id !== tbl.id);
+        } else {
+          return [...prev, tbl.id];
+        }
+      });
+    } else {
+      // Single-select mode for 2 or 4 people
+      setSelectedDirectSeatTableIds([tbl.id]);
+    }
+  };
 
   // Walk-in Waitlist state
   const [localWaitlist, setLocalWaitlist] = useState<WaitlistItem[]>(() => {
@@ -311,10 +432,17 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
       hour12: false,
     });
 
+    const formattedResTime = formatTimeUTC8(res.time);
+    const [startH, startM] = formattedResTime.split(':').map(Number);
+    const [endH, endM] = nowHHMM.split(':').map(Number);
+    const computedMins = (endH - startH) * 60 + (endM - startM);
+    const actualDuration = computedMins > 0 ? computedMins : (res.durationMinutes || 90);
+
     const updated: Reservation = {
       ...res,
       status: 'Completed',
       actualEndTime: nowHHMM,
+      durationMinutes: actualDuration,
     };
 
     if (onUpdateReservation) {
@@ -323,40 +451,139 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
       onUpdateReservationStatus(res.id, 'Completed');
     }
 
+    // Release table associated with this reservation
+    const targetTable = tables.find(
+      t =>
+        (res.tableId && (t.id === res.tableId || t.name === res.tableId)) ||
+        (res.tableName && (t.name === res.tableName || t.id === res.tableName)) ||
+        (t.customerName && t.customerName.toLowerCase() === res.customerName.toLowerCase())
+    );
+
+    if (targetTable) {
+      const releasedTable: Table = {
+        ...targetTable,
+        status: 'Available',
+        currentOrderId: undefined,
+        customerName: undefined,
+        reservationTime: undefined,
+      };
+      if (onUpdateTable) {
+        onUpdateTable(releasedTable);
+      }
+      gasService.syncTable(releasedTable);
+    }
+
     setReminderAlert(`Meal finished early for ${res.customerName}. Table is now free!`);
     setTimeout(() => setReminderAlert(null), 4000);
   };
 
-  // Waitlist handlers
+  // Walk-in / Direct Seating handlers
   const handleAddWaitlist = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!wlName || !wlPhone) return;
-
-    const nextSeq = waitlist.length + 1;
-    const newItem: WaitlistItem = {
-      id: 'wl-' + Date.now(),
-      queueNumber: `#W-${String(nextSeq).padStart(2, '0')}`,
-      customerName: wlName,
-      phone: wlPhone,
-      partySize: Number(wlPartySize),
-      notes: wlNotes,
-      status: 'Waiting',
-      createdAt: new Date().toISOString(),
-      estimatedWaitMinutes: Number(wlWaitMinutes) || (wlPartySize > 4 ? 30 : 15),
-    };
-
-    if (onAddWaitlist) {
-      onAddWaitlist(newItem);
-    } else {
-      setLocalWaitlist(prev => [newItem, ...prev]);
+    if (!wlName.trim() || !wlPhone.trim()) {
+      alert('請輸入顧客姓名與電話號碼！');
+      return;
     }
-    gasService.syncWaitlist(newItem);
-    setShowWaitlistModal(false);
-    setWlName('');
-    setWlPhone('');
-    setWlPartySize(2);
-    setWlWaitMinutes(15);
-    setWlNotes('');
+
+    const nowHHMM = nowTaipei.toLocaleTimeString('en-GB', {
+      timeZone: TIMEZONE_UTC8,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+
+    if (registrationMode === 'direct_seat') {
+      const selectedTables = tables.filter(t => selectedDirectSeatTableIds.includes(t.id));
+
+      if (selectedTables.length === 0) {
+        alert('無可用空桌或尚未選取桌號！已切換至【現場候位發牌】。');
+        setRegistrationMode('waitlist');
+        return;
+      }
+
+      const primaryTable = selectedTables[0];
+      const combinedTableName = selectedTables.map(t => t.name).join(' + ');
+
+      const newRes: Reservation = {
+        id: 'res-' + Date.now(),
+        customerName: wlName.trim(),
+        phone: wlPhone.trim(),
+        date: getTodayUTC8(),
+        time: nowHHMM,
+        partySize: Number(wlPartySize) || 2,
+        tableId: primaryTable.id,
+        tableName: combinedTableName,
+        status: 'Seated',
+        notes: wlNotes
+          ? `[免等待直接入座${selectedTables.length > 1 ? ` - 併桌: ${combinedTableName}` : ''}] ${wlNotes}`
+          : `[免等待直接入座${selectedTables.length > 1 ? ` - 併桌: ${combinedTableName}` : ''}]`,
+        durationMinutes: 90,
+        seatedAt: nowHHMM,
+        createdAt: new Date().toISOString(),
+      };
+
+      onAddReservation(newRes);
+
+      // Update status for all selected tables to Occupied
+      if (onUpdateTable) {
+        selectedTables.forEach(st => {
+          onUpdateTable({
+            ...st,
+            status: 'Occupied',
+            customerName: wlName.trim(),
+            mergedWith: selectedTables.length > 1 ? selectedTables.filter(x => x.id !== st.id).map(x => x.id) : undefined,
+          });
+        });
+      }
+
+      setShowWaitlistModal(false);
+      setReminderAlert(
+        `🎉 已為 ${wlName} (${wlPhone}) 安排 ${combinedTableName} 桌直接入座 (${selectedTotalCapacity}座位)，並成功紀錄/累積會員！`
+      );
+      setTimeout(() => setReminderAlert(null), 5000);
+
+      setWlName('');
+      setWlPhone('');
+      setWlPartySize(2);
+      setWlWaitMinutes(15);
+      setWlNotes('');
+
+      if (onOpenTableOrder) {
+        onOpenTableOrder(primaryTable);
+      }
+    } else {
+      const nextSeq = waitlist.length + 1;
+      const newItem: WaitlistItem = {
+        id: 'wl-' + Date.now(),
+        queueNumber: `#W-${String(nextSeq).padStart(2, '0')}`,
+        customerName: wlName.trim(),
+        phone: wlPhone.trim(),
+        partySize: Number(wlPartySize) || 2,
+        notes: wlNotes,
+        status: 'Waiting',
+        createdAt: new Date().toISOString(),
+        estimatedWaitMinutes: Number(wlWaitMinutes) || (wlPartySize > 4 ? 30 : 15),
+      };
+
+      if (onAddWaitlist) {
+        onAddWaitlist(newItem);
+      } else {
+        setLocalWaitlist(prev => [newItem, ...prev]);
+      }
+      gasService.syncWaitlist(newItem);
+
+      setShowWaitlistModal(false);
+      setReminderAlert(
+        `🎫 已為 ${wlName} (${wlPhone}) 完成現場候位登記 (${newItem.queueNumber})，並成功紀錄/累積會員！`
+      );
+      setTimeout(() => setReminderAlert(null), 5000);
+
+      setWlName('');
+      setWlPhone('');
+      setWlPartySize(2);
+      setWlWaitMinutes(15);
+      setWlNotes('');
+    }
   };
 
   const handleUpdateWaitlistStatus = (id: string, status: WaitlistItem['status']) => {
@@ -482,12 +709,17 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
     // Meal duration: default 90 mins
     let durationMins = res.durationMinutes || 90;
 
-    // If completed early and actualEndTime exists, calculate actual duration
+    // If completed and actualEndTime exists, calculate actual duration
     if (res.status === 'Completed' && res.actualEndTime) {
       const [endH, endM] = res.actualEndTime.split(':').map(Number);
       const actualDuration = (endH - h) * 60 + (endM - m);
-      if (actualDuration > 0 && actualDuration < durationMins) {
+      if (actualDuration > 0) {
         durationMins = actualDuration;
+      }
+    } else if (res.status === 'Seated' && selectedDate === getTodayUTC8()) {
+      const currentDuration = currentTotalMinutes - startMinutes;
+      if (currentDuration > durationMins) {
+        durationMins = currentDuration;
       }
     }
 
@@ -508,7 +740,7 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
           <div>
             <div className="flex items-center space-x-2">
               <h1 className="text-xl font-black tracking-tight text-gray-900 dark:text-white flex items-center">
-                <CalendarIcon className="mr-2 h-6 w-6 text-[#FF8A00]" /> 訂位與候位管理
+                <CalendarIcon className="mr-2 h-6 w-6 text-[#FF8A00]" /> {t('nav_reservations')}
               </h1>
               <span className="rounded-full bg-orange-100 dark:bg-orange-950/60 text-[#FF8A00] font-mono text-[10px] font-bold px-2 py-0.5 border border-orange-200 dark:border-orange-900">
                 Asia/Taipei UTC+8
@@ -519,13 +751,27 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => setShowWaitlistModal(true)}
+              onClick={() => {
+                setRegistrationMode('direct_seat');
+                setShowWaitlistModal(true);
+              }}
+              className="flex items-center space-x-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 transition-all shadow-xs"
+            >
+              <UserCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              <span>+ 免等待直接入座</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setRegistrationMode('waitlist');
+                setShowWaitlistModal(true);
+              }}
               className="flex items-center space-x-1.5 rounded-xl border border-orange-300 bg-orange-50 px-3.5 py-2 text-xs font-bold text-[#FF8A00] hover:bg-orange-100 dark:border-orange-900 dark:bg-orange-950/40 dark:text-orange-300 transition-all shadow-xs"
             >
-              <UserCheck className="h-4 w-4" />
-              <span>+ 現場候位</span>
+              <BellRing className="h-4 w-4" />
+              <span>+ 現場候位發牌</span>
               {activeWaitlistCount > 0 && (
                 <span className="ml-1 rounded-full bg-[#FF8A00] px-1.5 py-0.2 text-[10px] text-white font-extrabold">
                   {activeWaitlistCount}
@@ -538,7 +784,7 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
               className="flex items-center space-x-1.5 rounded-xl bg-[#FF8A00] px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-[#e07900] transition-all"
             >
               <Plus className="h-4 w-4" />
-              <span>+ 新增訂位</span>
+              <span>+ 新增預約訂位</span>
             </button>
           </div>
         </div>
@@ -731,12 +977,44 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
             {/* Table Rows */}
             <div className="divide-y divide-gray-100 dark:divide-gray-800">
               {tables.map(table => {
-                // Find reservations for this table on selected date
-                const tableResList = dayReservations.filter(
-                  r =>
-                    (r.tableId && r.tableId === table.id) ||
-                    (r.tableName && r.tableName.trim().toLowerCase() === table.name.trim().toLowerCase())
-                );
+                // Find reservations for this table on selected date (including merged tables)
+                const tableResList = dayReservations.filter(r => {
+                  if (r.tableId && r.tableId === table.id) return true;
+                  if (r.tableName && r.tableName.trim().toLowerCase() === table.name.trim().toLowerCase()) return true;
+
+                  // Check if tableName is composite (e.g. "T1 + T2" or "T1, T2")
+                  if (r.tableName) {
+                    const parts = r.tableName.split(/[\+,&/]/).map(s => s.trim().toLowerCase());
+                    if (
+                      parts.includes(table.name.trim().toLowerCase()) ||
+                      parts.includes(`table ${table.name}`.toLowerCase()) ||
+                      parts.includes(`桌 ${table.name}`.toLowerCase())
+                    ) {
+                      return true;
+                    }
+                  }
+
+                  // Check if table has merged partners
+                  if (table.mergedWith && table.mergedWith.length > 0) {
+                    if (r.tableId && table.mergedWith.includes(r.tableId)) return true;
+                    const mergedPartnerNames = tables
+                      .filter(t => table.mergedWith?.includes(t.id))
+                      .map(t => t.name.trim().toLowerCase());
+                    if (r.tableName && mergedPartnerNames.includes(r.tableName.trim().toLowerCase())) return true;
+                    if (r.tableName) {
+                      const parts = r.tableName.split(/[\+,&/]/).map(s => s.trim().toLowerCase());
+                      if (parts.some(p => mergedPartnerNames.includes(p))) return true;
+                    }
+                  }
+
+                  // Check if tableId contains comma/plus separated table IDs
+                  if (r.tableId && (r.tableId.includes(',') || r.tableId.includes('+'))) {
+                    const ids = r.tableId.split(/[\+,]/).map(s => s.trim());
+                    if (ids.includes(table.id) || ids.includes(table.name)) return true;
+                  }
+
+                  return false;
+                });
 
                 return (
                   <div key={table.id} className="flex items-center py-3 min-h-[90px] hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors">
@@ -796,9 +1074,20 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
                                 </span>
                               </div>
 
-                              <span className="text-xs font-black px-2.5 py-0.5 rounded-lg bg-slate-900 text-amber-300 dark:bg-black dark:text-amber-300 shrink-0 font-mono shadow-2xs">
-                                {res.time}
-                              </span>
+                              <div className="flex items-center space-x-1 shrink-0">
+                                <span className="text-xs font-black px-2.5 py-0.5 rounded-lg bg-slate-900 text-amber-300 dark:bg-black dark:text-amber-300 shrink-0 font-mono shadow-2xs">
+                                  {res.time}{res.actualEndTime ? ` - ${res.actualEndTime}` : ''}
+                                </span>
+                                {res.durationMinutes && (
+                                  <span className={`text-[10px] font-mono font-black px-1.5 py-0.5 rounded shadow-2xs ${
+                                    res.durationMinutes > 90
+                                      ? 'bg-rose-600 text-white dark:bg-rose-700'
+                                      : 'bg-white/90 text-gray-800 dark:bg-black/60 dark:text-gray-200'
+                                  }`}>
+                                    {res.durationMinutes}分{res.durationMinutes > 90 ? ' (超時)' : ''}
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             <div className="flex items-center justify-between gap-2 mt-1">
@@ -806,7 +1095,7 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
                                 <span className={`text-xs font-black px-2.5 py-0.5 rounded-md shrink-0 ${
                                   isSeated ? 'bg-emerald-600 text-white' : isCompleted ? 'bg-gray-500 text-white' : 'bg-amber-500 text-slate-950 font-black'
                                 }`}>
-                                  {isSeated ? '🟢 用餐中' : isCompleted ? '⚪ 已結束' : '🟡 已預約'}
+                                  {isSeated ? '🟢 用餐中' : isCompleted ? '⚪ 結束用餐' : '🟡 已預約'}
                                 </span>
                                 {res.notes && (
                                   <span className="text-xs font-bold text-orange-950 dark:text-orange-200 bg-white/80 dark:bg-black/50 px-2 py-0.5 rounded-md border border-orange-200/80 dark:border-orange-800/80 truncate max-w-[280px]">
@@ -1461,84 +1750,288 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
         </div>
       )}
 
-      {/* MODAL 2: ADD WALK-IN WAITLIST */}
+      {/* MODAL 2: ADD WALK-IN & DIRECT SEATING REGISTRATION */}
       {showWaitlistModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center">
-              <UserCheck className="mr-2 h-5 w-5 text-[#FF8A00]" /> 登記現場候位 (Add Walk-in Waitlist)
-            </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900 border border-gray-100 dark:border-gray-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 pb-3">
+              <div>
+                <h3 className="text-lg font-black text-gray-900 dark:text-white flex items-center">
+                  <UserCheck className="mr-2 h-5 w-5 text-[#FF8A00]" />
+                  現場賓客登記 (Walk-in & Direct Seating)
+                </h3>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                  登記電話與姓名可自動累積會員紅利點數與來店記錄
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWaitlistModal(false)}
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Mode Switcher Tabs */}
+            <div className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
+              <button
+                type="button"
+                onClick={() => setRegistrationMode('direct_seat')}
+                className={`flex items-center justify-center space-x-1.5 rounded-lg py-2 text-xs font-black transition-all ${
+                  registrationMode === 'direct_seat'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+                }`}
+              >
+                <UserCheck className="h-4 w-4" />
+                <span>免等待直接入座</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRegistrationMode('waitlist')}
+                className={`flex items-center justify-center space-x-1.5 rounded-lg py-2 text-xs font-black transition-all ${
+                  registrationMode === 'waitlist'
+                    ? 'bg-[#FF8A00] text-white shadow-xs'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+                }`}
+              >
+                <BellRing className="h-4 w-4" />
+                <span>現場候位發牌</span>
+              </button>
+            </div>
 
             <form onSubmit={handleAddWaitlist} className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1 dark:text-gray-300">顧客姓名 (Guest Name)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 陳 先生"
-                  value={wlName}
-                  onChange={e => setWlName(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 p-2 text-xs dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                  required
-                />
-              </div>
-
-              <PhoneKeypadInput
-                label="聯絡電話 (Phone Number)"
-                value={wlPhone}
-                onChange={setWlPhone}
-                placeholder="0912-345-678"
-                required
-              />
-
-              <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1 dark:text-gray-300">用餐人數 (Party Size)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={wlPartySize}
-                  onChange={e => setWlPartySize(Number(e.target.value))}
-                  className="w-full rounded-xl border border-gray-200 p-2 text-xs dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1 dark:text-gray-300">預估等待時間 (分鐘) (Est. Wait Time)</label>
-                <div className="flex items-center space-x-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 dark:text-gray-300">
+                    顧客姓名 (Guest Name) *
+                  </label>
                   <input
-                    type="number"
-                    min={0}
-                    max={300}
-                    value={wlWaitMinutes}
-                    onChange={e => setWlWaitMinutes(Number(e.target.value))}
-                    className="w-24 rounded-xl border border-gray-200 p-2 text-xs font-black dark:bg-gray-800 dark:border-gray-700 text-amber-600 dark:text-amber-400 font-mono"
+                    type="text"
+                    placeholder="例如：王小明"
+                    value={wlName}
+                    onChange={e => setWlName(e.target.value)}
+                    className="w-full rounded-xl border border-gray-200 p-2 text-xs font-medium dark:bg-gray-800 dark:border-gray-700 dark:text-white focus:border-[#FF8A00] focus:outline-none"
                     required
                   />
-                  <div className="flex items-center space-x-1 overflow-x-auto py-0.5">
-                    {[10, 15, 20, 30, 45, 60].map(m => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setWlWaitMinutes(m)}
-                        className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${
-                          wlWaitMinutes === m
-                            ? 'bg-[#FF8A00] text-white border-[#FF8A00] shadow-xs'
-                            : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200'
-                        }`}
-                      >
-                        {m}分
-                      </button>
-                    ))}
-                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 dark:text-gray-300">
+                    用餐人數 (Party Size) *
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={wlPartySize}
+                    onChange={e => setWlPartySize(Number(e.target.value))}
+                    className="w-full rounded-xl border border-gray-200 p-2 text-xs font-black dark:bg-gray-800 dark:border-gray-700 dark:text-white focus:border-[#FF8A00] focus:outline-none"
+                    required
+                  />
                 </div>
               </div>
 
+              <PhoneKeypadInput
+                label="聯絡電話 (Phone Number) *"
+                value={wlPhone}
+                onChange={setWlPhone}
+                placeholder="例如：0912345678"
+                required
+              />
+
+              {/* LIVE MEMBER IDENTIFICATION BOX */}
+              {matchedWalkinCustomer ? (
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-800 p-3 text-xs space-y-1 text-emerald-900 dark:text-emerald-200 animate-in fade-in">
+                  <div className="flex items-center justify-between font-extrabold">
+                    <span className="flex items-center">
+                      <UserCheck className="h-4 w-4 mr-1 text-emerald-600 dark:text-emerald-400" />
+                      ✨ 識別為既有會員：{matchedWalkinCustomer.name}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100 text-[10px] font-black">
+                      {matchedWalkinCustomer.tier} 會員
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-emerald-800 dark:text-emerald-300 pt-0.5">
+                    <span>電話: {matchedWalkinCustomer.phone || wlPhone}</span>
+                    <span>現有累積點數: <strong>{matchedWalkinCustomer.loyaltyPoints || 0} pts</strong></span>
+                  </div>
+                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium pt-0.5">
+                    ✓ 登記完成將自動連結消費歷程並累積紅利點數！
+                  </p>
+                </div>
+              ) : wlPhone.trim().length >= 7 ? (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 dark:bg-blue-950/40 dark:border-blue-900 p-3 text-xs space-y-1 text-blue-900 dark:text-blue-200 animate-in fade-in">
+                  <div className="flex items-center justify-between font-extrabold">
+                    <span className="flex items-center">
+                      <Users className="h-4 w-4 mr-1 text-blue-600 dark:text-blue-400" />
+                      🆕 註冊全新會員帳號
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-200 dark:bg-blue-800 text-blue-900 dark:text-blue-100 text-[10px] font-black">
+                      迎賓點數 +100pts
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-blue-800 dark:text-blue-300">
+                    電話 ({wlPhone}) 登記完成後，系統將自動建檔並開啟品牌會員紅利累積！
+                  </p>
+                </div>
+              ) : null}
+
+              {/* MODE SPECIFIC CONTROLS */}
+              {registrationMode === 'direct_seat' ? (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 dark:bg-gray-800/50 dark:border-gray-700 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    <label className="block text-xs font-bold text-gray-800 dark:text-gray-200">
+                      選擇開桌桌號 (Select Table)
+                    </label>
+                    {wlPartySize <= 2 ? (
+                      <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-300">
+                        🎯 2人用餐：鎖定2人專用桌號
+                      </span>
+                    ) : wlPartySize === 3 || wlPartySize === 4 ? (
+                      <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-300">
+                        🎯 4人用餐：鎖定4人專用桌號
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-black text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-300">
+                        🔗 {wlPartySize}人大桌：點選多張桌號組合進行併桌
+                      </span>
+                    )}
+                  </div>
+
+                  {tables.filter(t => t.status === 'Available').length > 0 ? (
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto pr-1">
+                        {tables.map(tbl => {
+                          const seats = tbl.seats || (tbl as any).capacity || 2;
+                          const { eligible, badge } = getTableEligibility(tbl, wlPartySize);
+                          const isSelected = selectedDirectSeatTableIds.includes(tbl.id);
+
+                          return (
+                            <button
+                              key={tbl.id}
+                              type="button"
+                              disabled={!eligible}
+                              onClick={() => handleSelectDirectSeatTable(tbl)}
+                              className={`p-2 rounded-xl text-left border transition-all relative ${
+                                isSelected
+                                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-400 font-bold'
+                                  : eligible
+                                  ? 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border-emerald-300 dark:border-emerald-800 hover:border-emerald-500 hover:bg-emerald-50/60'
+                                  : 'opacity-40 bg-gray-100 dark:bg-gray-800/80 text-gray-400 border-gray-200 dark:border-gray-700 cursor-not-allowed'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-black">{tbl.name} 桌</span>
+                                <span
+                                  className={`text-[9px] px-1.5 py-0.2 rounded-md font-extrabold ${
+                                    isSelected
+                                      ? 'bg-white text-emerald-800'
+                                      : eligible
+                                      ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
+                                      : 'bg-gray-200 dark:bg-gray-700 text-gray-500'
+                                  }`}
+                                >
+                                  {isSelected ? '✓ 已選取' : `${seats}人桌`}
+                                </span>
+                              </div>
+                              <div
+                                className={`text-[10px] mt-1 font-medium ${
+                                  isSelected
+                                    ? 'text-emerald-100'
+                                    : eligible
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-gray-400'
+                                }`}
+                              >
+                                {badge}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* COMBINED CAPACITY SUMMARY FOR MULTI-SELECT (5+ PEOPLE) */}
+                      {wlPartySize >= 5 && (
+                        <div className="rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2 text-xs flex items-center justify-between text-amber-900 dark:text-amber-200 font-bold">
+                          <span className="flex items-center">
+                            <Link2 className="h-4 w-4 mr-1 text-amber-600" />
+                            已選 {selectedDirectSeatTableIds.length} 桌：
+                            <span className="underline ml-1">
+                              {tables
+                                .filter(t => selectedDirectSeatTableIds.includes(t.id))
+                                .map(t => `${t.name}桌(${t.seats || 2}位)`)
+                                .join(' + ') || '尚未選擇'}
+                            </span>
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              selectedTotalCapacity >= wlPartySize
+                                ? 'bg-emerald-200 text-emerald-900 dark:bg-emerald-800 dark:text-emerald-100'
+                                : 'bg-rose-200 text-rose-900 dark:bg-rose-800 dark:text-rose-100'
+                            }`}
+                          >
+                            合計 {selectedTotalCapacity} / 目標 {wlPartySize} 人
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between">
+                      <span>⚠️ 目前全場客滿，尚無空桌可直接入座。</span>
+                      <button
+                        type="button"
+                        onClick={() => setRegistrationMode('waitlist')}
+                        className="px-2 py-1 bg-amber-600 text-white rounded-lg text-[10px] font-bold"
+                      >
+                        切換至候位發牌
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1 dark:text-gray-300">
+                    預估等待時間 (分鐘) (Est. Wait Time)
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={300}
+                      value={wlWaitMinutes}
+                      onChange={e => setWlWaitMinutes(Number(e.target.value))}
+                      className="w-24 rounded-xl border border-gray-200 p-2 text-xs font-black dark:bg-gray-800 dark:border-gray-700 text-amber-600 dark:text-amber-400 font-mono"
+                      required
+                    />
+                    <div className="flex items-center space-x-1 overflow-x-auto py-0.5">
+                      {[10, 15, 20, 30, 45, 60].map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setWlWaitMinutes(m)}
+                          className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${
+                            wlWaitMinutes === m
+                              ? 'bg-[#FF8A00] text-white border-[#FF8A00] shadow-xs'
+                              : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200'
+                          }`}
+                        >
+                          {m}分
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1 dark:text-gray-300">備註需求 (Notes / Requests)</label>
+                <label className="block text-xs font-bold text-gray-600 mb-1 dark:text-gray-300">
+                  備註需求 (Notes / Requests)
+                </label>
                 <textarea
                   rows={2}
-                  placeholder="e.g. 靠窗優先, 需兒童椅..."
+                  placeholder="例如：靠窗優先, 需兒童椅..."
                   value={wlNotes}
                   onChange={e => setWlNotes(e.target.value)}
                   className="w-full rounded-xl border border-gray-200 p-2 text-xs dark:bg-gray-800 dark:border-gray-700 dark:text-white"
@@ -1556,9 +2049,13 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-[#FF8A00] px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-[#e07900]"
+                  className={`rounded-xl px-5 py-2 text-xs font-bold text-white shadow-md transition-all ${
+                    registrationMode === 'direct_seat'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-[#FF8A00] hover:bg-[#e07900]'
+                  }`}
                 >
-                  確認發牌登記
+                  {registrationMode === 'direct_seat' ? '確認登記並直接開桌' : '確認登記並發放候位號碼'}
                 </button>
               </div>
             </form>

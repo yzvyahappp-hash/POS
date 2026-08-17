@@ -163,7 +163,15 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                     className="flex items-center justify-between rounded-xl border border-gray-100 p-2.5 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800 cursor-pointer transition-all"
                   >
                     <div className="flex items-center space-x-3">
-                      <img src={m.image} alt={m.name} className="h-8 w-8 rounded-lg object-cover" />
+                      <img
+                        src={m.image || 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80'}
+                        alt={m.name}
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80';
+                        }}
+                        className="h-8 w-8 rounded-lg object-cover"
+                      />
                       <div>
                         <span className="font-bold text-xs text-gray-900 dark:text-white">{m.name}</span>
                         <span className="ml-2 text-[11px] text-gray-400">{m.category}</span>

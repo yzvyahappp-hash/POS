@@ -110,36 +110,13 @@ export function translatePaymentStatus(status?: string): string {
   return status || '待結帳';
 }
 
+export const HANDWRITING_FONT = "'手札體', 'Zen Kurenaido', 'DFKai-SB', '標楷體', 'Caveat', cursive, sans-serif";
+
 export const RECEIPT_FONTS = [
   {
     id: 'handwriting',
-    name: '✍️ 手札體 (日系隨筆手寫風)',
-    family: "'Zen Kurenaido', 'Caveat', 'DFKai-SB', '標楷體', cursive",
-  },
-  {
-    id: 'longcang',
-    name: '✒️ 狂草隨筆 (行書手寫風)',
-    family: "'Long Cang', 'Caveat', 'DFKai-SB', cursive",
-  },
-  {
-    id: 'mono',
-    name: '🖨️ 經典熱感應等寬體 (Courier)',
-    family: "'Courier New', Courier, 'Consolas', monospace",
-  },
-  {
-    id: 'sans',
-    name: '📱 現代極簡黑體 (Noto Sans)',
-    family: "'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif",
-  },
-  {
-    id: 'serif',
-    name: '📖 典雅復古明體 (Noto Serif)',
-    family: "'Noto Serif TC', 'PMingLiU', '新細明體', serif",
-  },
-  {
-    id: 'rounded',
-    name: '🎈 日系可愛圓體 (Zen Maru)',
-    family: "'Zen Maru Gothic', 'M PLUS Rounded 1c', sans-serif",
+    name: '✍️ 手札體',
+    family: HANDWRITING_FONT,
   },
 ];
 
@@ -152,7 +129,7 @@ export const receiptService = {
     };
   },
 
-  generateReceiptHTML(order: Order, settings: RestaurantSettings, fontFamily?: string): string {
+  generateReceiptHTML(order: Order, settings: RestaurantSettings, _fontFamily?: string): string {
     const safeSettings = settings || {
       restaurantName: 'Grand Bistro & Grill 格蘭小酒館＆炭烤餐廳',
       logoUrl: '',
@@ -168,7 +145,7 @@ export const receiptService = {
       autoKdsSync: true,
     };
 
-    const chosenFont = fontFamily || RECEIPT_FONTS[0].family;
+    const chosenFont = HANDWRITING_FONT;
     const dateStr = formatDateUTC8(order.createdAt);
     const cleanOrderNum = order.orderNumber || '0000';
     const documentTitle = `訂單-${cleanOrderNum}-明細-${dateStr}`;
@@ -200,6 +177,37 @@ export const receiptService = {
     const formattedPayMethod = translatePaymentMethod(order.paymentMethod);
     const formattedPayStatus = translatePaymentStatus(order.paymentStatus);
 
+    // Calculate detailed discount components and total combined discount
+    const subtotal = order.subtotal || order.totalAmount || 0;
+    const promoDiscount =
+      order.promoDiscountAmount ||
+      (order.appliedPromos && order.appliedPromos.length > 0
+        ? order.appliedPromos.reduce((sum, p) => sum + (p.discountAmount || 0), 0)
+        : 0);
+
+    const pointsDiscount = order.pointsDiscountAmount || 0;
+
+    const couponDiscount =
+      order.couponDiscountAmount ||
+      (order.couponCode && (order.discountAmount || 0) > 0 && !promoDiscount && !pointsDiscount
+        ? order.discountAmount
+        : 0);
+
+    const percentageDiscount =
+      order.percentageDiscountAmount ||
+      ((order.discountPercentage || 0) > 0
+        ? (subtotal * order.discountPercentage) / 100
+        : 0);
+
+    const manualDiscount =
+      (order.discountAmount || 0) > 0 &&
+      !(promoDiscount || pointsDiscount || couponDiscount || percentageDiscount)
+        ? order.discountAmount || 0
+        : 0;
+
+    const computedSum = promoDiscount + pointsDiscount + couponDiscount + percentageDiscount + manualDiscount;
+    const totalCombinedDiscount = Math.max(order.discountAmount || 0, computedSum);
+
     return `
       <!DOCTYPE html>
       <html>
@@ -208,7 +216,7 @@ export const receiptService = {
         <meta charset="utf-8" />
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Long+Cang&family=Ma+Shan+Zheng&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@400;700&family=Zen+Kurenaido&family=Zen+Maru+Gothic:wght@500;700&family=Zhi+Mang+Xing&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Zen+Kurenaido&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
         <style>
           body {
             font-family: ${chosenFont};
@@ -249,6 +257,16 @@ export const receiptService = {
           <div><strong>服務員:</strong> ${formattedServer}</div>
         </div>
 
+        ${
+          order.customerName && order.customerName.toLowerCase() !== 'guest'
+            ? `<div style="margin: 8px 0; padding: 6px; border: 1px dashed #555; background: #fafafa; font-size: 11px; border-radius: 4px;">
+                <div class="bold" style="font-size: 11px; margin-bottom: 2px; color: #222;">⭐ 會員點數明細 (Loyalty Points)</div>
+                <div>目前累積點數餘額 (Balance): <strong>${order.customerPointsBalance !== undefined ? order.customerPointsBalance : '---'} pts</strong></div>
+                ${(order.pointsRedeemed || 0) > 0 ? `<div style="color: #c53030; font-weight: bold;">本次使用點數 (Redeemed): -${order.pointsRedeemed} pts (-$${(order.pointsDiscountAmount || 0).toFixed(2)})</div>` : '<div style="color: #666;">本次未折抵點數 (No Points Used)</div>'}
+              </div>`
+            : ''
+        }
+
         <div class="divider"></div>
 
         <table>
@@ -267,16 +285,60 @@ export const receiptService = {
 
         <table>
           <tr>
-            <td>小計金額:</td>
-            <td class="text-right">$${(order.subtotal || 0).toFixed(2)}</td>
+            <td>小計金額 (Subtotal):</td>
+            <td class="text-right">$${subtotal.toFixed(2)}</td>
           </tr>
           ${
-            (order.discountAmount || 0) > 0
-              ? `<tr>
-            <td>折扣優惠 (${order.discountPercentage || 0}%):</td>
-            <td class="text-right">-$${(order.discountAmount || 0).toFixed(2)}</td>
-          </tr>`
-              : ''
+            totalCombinedDiscount > 0
+              ? `${
+                  order.appliedPromos && order.appliedPromos.length > 0
+                    ? order.appliedPromos
+                        .map(
+                          p => `<tr style="color: #047857;">
+                  <td>🎁 優惠: ${p.title} (${p.reason})</td>
+                  <td class="text-right">-$${p.discountAmount.toFixed(2)}</td>
+                </tr>`
+                        )
+                        .join('')
+                    : promoDiscount > 0
+                    ? `<tr style="color: #047857;">
+                  <td>🎁 自動組合/滿額特惠 (Auto Promo):</td>
+                  <td class="text-right">-$${promoDiscount.toFixed(2)}</td>
+                </tr>`
+                    : ''
+                }
+                ${
+                  pointsDiscount > 0
+                    ? `<tr>
+                  <td>🌟 會員點數折抵 (${order.pointsRedeemed || 0} pts):</td>
+                  <td class="text-right">-$${pointsDiscount.toFixed(2)}</td>
+                </tr>`
+                    : ''
+                }
+                ${
+                  couponDiscount > 0 || (order.couponCode && order.couponCode.trim() !== '')
+                    ? `<tr>
+                  <td>🏷️ 優惠券折抵 (${order.couponCode || '折價券'}):</td>
+                  <td class="text-right">-$${(couponDiscount || (order.discountAmount && !promoDiscount && !pointsDiscount ? order.discountAmount : 0)).toFixed(2)}</td>
+                </tr>`
+                    : ''
+                }
+                ${
+                  percentageDiscount > 0 || manualDiscount > 0 || (order.discountPercentage || 0) > 0 || (order.discountAmount && !promoDiscount && !pointsDiscount && !couponDiscount ? order.discountAmount > 0 : false)
+                    ? `<tr>
+                  <td>✂️ ${order.discountPercentage && order.discountPercentage > 0 ? `整單折扣 (${order.discountPercentage}%)` : '折扣優惠'}:</td>
+                  <td class="text-right">-$${(percentageDiscount || manualDiscount || order.discountAmount || 0).toFixed(2)}</td>
+                </tr>`
+                    : ''
+                }
+                <tr class="bold" style="color: #c53030; font-weight: bold; border-top: 1px dashed #666; border-bottom: 1px dashed #666;">
+                  <td style="padding: 3px 0;">合計總折扣 (Total Discount):</td>
+                  <td class="text-right" style="padding: 3px 0;">-$${totalCombinedDiscount.toFixed(2)}</td>
+                </tr>`
+              : `<tr style="color: #777; font-style: italic;">
+                  <td>折抵明細 (Discounts):</td>
+                  <td class="text-right">未使用任何折抵</td>
+                </tr>`
           }
           <tr>
             <td>營業稅金 (${order.taxRate || safeSettings.taxRate}%):</td>
@@ -385,6 +447,207 @@ export const receiptService = {
         printWindow.focus();
         printWindow.print();
       };
+    }
+  },
+
+  generateKitchenTicketHTML(order: Order, _settings?: RestaurantSettings): string {
+    const formattedTable = order.tableName
+      ? `桌號 Table: ${order.tableName}`
+      : order.type
+      ? translateOrderType(order.type)
+      : '外帶 Takeout';
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>KDS Kitchen Ticket - ${order.orderNumber}</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Zen+Kurenaido&family=Caveat:wght@700&family=Kalam:wght@700&display=swap');
+          
+          @page {
+            size: 80mm auto;
+            margin: 3mm;
+          }
+          body {
+            font-family: '手札體', 'Zen Kurenaido', 'DFKai-SB', '標楷體', 'Caveat', 'Kalam', cursive, sans-serif;
+            width: 100%;
+            max-width: 350px;
+            margin: 0 auto;
+            padding: 6px;
+            color: #000;
+            background: #fff;
+            font-size: 26px; /* 2X font size for fast kitchen visibility */
+            line-height: 1.35;
+            font-weight: 900;
+            -webkit-print-color-adjust: exact;
+          }
+          .ticket-header {
+            text-align: center;
+            border-bottom: 4px solid #000;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+          }
+          .order-num {
+            font-size: 42px; /* 2X Order Number */
+            font-weight: 900;
+            line-height: 1.1;
+            letter-spacing: -1px;
+          }
+          .table-badge {
+            font-size: 34px; /* 2X Table Badge */
+            font-weight: 900;
+            margin-top: 8px;
+            background: #000;
+            color: #fff;
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 8px;
+          }
+          .dishes-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+          }
+          .dish-item {
+            border-bottom: 2px dashed #000;
+            padding: 12px 0;
+          }
+          .dish-line {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            font-size: 28px; /* 2X Dish Name */
+            font-weight: 900;
+          }
+          .qty {
+            font-size: 38px;
+            font-weight: 900;
+            margin-right: 8px;
+            display: inline-block;
+          }
+          .dish-name {
+            flex: 1;
+            word-break: break-word;
+          }
+          .modifiers-box {
+            font-size: 22px;
+            font-weight: 800;
+            margin-top: 4px;
+            padding-left: 20px;
+            color: #111;
+          }
+          .kitchen-note-box {
+            margin-top: 14px;
+            padding: 10px 12px;
+            border: 3px solid #000;
+            font-size: 24px;
+            font-weight: 900;
+            background: #f4f4f4;
+            border-radius: 6px;
+          }
+          .divider {
+            border-top: 4px solid #000;
+            margin: 14px 0;
+          }
+        </style>
+      </head>
+      <body>
+        <!-- 1. Order No. -->
+        <div class="ticket-header">
+          <div class="order-num">單號 ${order.orderNumber}</div>
+          <!-- 2. Table -->
+          <div class="table-badge">${formattedTable}</div>
+          ${
+            order.kitchenNotes && (order.kitchenNotes.includes('加點') || order.kitchenNotes.includes('ADD-ON'))
+              ? `<div style="background:#d97706; color:#fff; font-size:24px; font-weight:900; margin-top:8px; display:inline-block; padding:4px 14px; border-radius:8px;">⚡ 加點單 (ADD-ON DISHES ONLY)</div>`
+              : ''
+          }
+        </div>
+
+        <!-- 3. Dishes -->
+        <div class="dishes-table">
+          ${(order.items || [])
+            .map(
+              item => `
+            <div class="dish-item">
+              <div class="dish-line">
+                <div>
+                  <span class="qty">${item.quantity}x</span>
+                  <span class="dish-name">${translateText(item.name)}</span>
+                </div>
+              </div>
+              ${
+                item.modifiers && item.modifiers.length > 0
+                  ? `
+                <div class="modifiers-box">
+                  ${item.modifiers.map(m => `• ${translateText(m)}`).join('<br/>')}
+                </div>
+              `
+                  : ''
+              }
+            </div>
+          `
+            )
+            .join('')}
+        </div>
+
+        ${
+          order.kitchenNotes
+            ? `
+          <div class="kitchen-note-box">
+            ⚠️ 廚房備註: ${order.kitchenNotes}
+          </div>
+        `
+            : ''
+        }
+
+        <div class="divider"></div>
+      </body>
+      </html>
+    `;
+  },
+
+  printKitchenTicket(order: Order, settings?: RestaurantSettings) {
+    const html = this.generateKitchenTicketHTML(order, settings);
+
+    let kdsIframe = document.getElementById('kds-ticket-print-iframe') as HTMLIFrameElement;
+    if (!kdsIframe) {
+      kdsIframe = document.createElement('iframe');
+      kdsIframe.id = 'kds-ticket-print-iframe';
+      kdsIframe.setAttribute(
+        'style',
+        'position: absolute; width: 0; height: 0; left: -9999px; top: -9999px; border: none;'
+      );
+      document.body.appendChild(kdsIframe);
+    }
+
+    try {
+      const iframeDoc = kdsIframe.contentWindow?.document || kdsIframe.contentDocument;
+      if (iframeDoc) {
+        iframeDoc.open();
+        iframeDoc.write(html);
+        iframeDoc.close();
+
+        setTimeout(() => {
+          try {
+            kdsIframe.contentWindow?.focus();
+            kdsIframe.contentWindow?.print();
+          } catch (err) {
+            console.warn('KDS Iframe print failed:', err);
+            window.focus();
+            window.print();
+          }
+        }, 300);
+      } else {
+        window.focus();
+        window.print();
+      }
+    } catch (err) {
+      console.warn('Direct KDS iframe write error:', err);
+      window.focus();
+      window.print();
     }
   },
 };

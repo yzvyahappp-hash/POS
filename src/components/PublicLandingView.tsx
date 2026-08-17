@@ -81,9 +81,11 @@ export const PublicLandingView: React.FC<PublicLandingViewProps> = ({
     }
   };
 
-  const filteredItems = menuItems.filter(
-    item => activeCategory === 'All' || item.category === activeCategory
-  );
+  const filteredItems = menuItems.filter(item => {
+    if (activeCategory === 'All') return true;
+    if (activeCategory === 'Combos') return item.category === 'Combos' || item.isCombo === true;
+    return item.category === activeCategory;
+  });
 
   const handleReviewStart = (e: React.FormEvent) => {
     e.preventDefault();
@@ -788,12 +790,26 @@ export const PublicLandingView: React.FC<PublicLandingViewProps> = ({
                 className="rounded-3xl border border-slate-800 bg-slate-950 overflow-hidden shadow-lg hover:border-slate-700 transition-all flex flex-col justify-between"
               >
                 <div>
-                  <div className="relative h-48 overflow-hidden">
+                  <div className="relative h-48 overflow-hidden bg-slate-900">
                     <img
                       src={item.image || 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80'}
                       alt={getDishName(item.name, lang)}
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80';
+                      }}
                       className="w-full h-full object-cover hover:scale-105 transition-transform duration-500"
                     />
+                    {item.isPopular && (
+                      <span className="absolute top-3 left-3 rounded-full bg-amber-500 text-slate-950 px-2.5 py-1 text-[10px] font-black shadow-md">
+                        {lang === 'zh-TW' ? '主廚招牌' : lang === 'ja' ? 'シェフのおすすめ' : "Chef's Specialty"}
+                      </span>
+                    )}
+                    {item.isCombo && !item.isPopular && (
+                      <span className="absolute top-3 left-3 rounded-full bg-indigo-600 text-white px-2.5 py-1 text-[10px] font-black shadow-md">
+                        {lang === 'zh-TW' ? '超值套餐' : lang === 'ja' ? 'お得セット' : "Special Combo"}
+                      </span>
+                    )}
                     <div className="absolute top-3 right-3 rounded-full bg-slate-950/80 backdrop-blur-md border border-slate-700 px-3 py-1 text-xs font-black text-amber-400">
                       ${item.price.toFixed(2)}
                     </div>
@@ -813,8 +829,14 @@ export const PublicLandingView: React.FC<PublicLandingViewProps> = ({
                 </div>
 
                 <div className="px-5 pb-5 pt-2 border-t border-slate-900 flex items-center justify-between text-xs font-semibold text-slate-400">
-                  <span className="text-amber-400/90 font-bold text-[11px] bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg">
-                    {lang === 'zh-TW' ? '主廚招牌' : lang === 'ja' ? 'シェフのおすすめ' : "Chef's Specialty"}
+                  <span className={`font-bold text-[11px] px-2.5 py-1 rounded-lg ${
+                    item.isCombo
+                      ? 'text-indigo-400 bg-indigo-500/10 border border-indigo-500/20'
+                      : 'text-slate-400 bg-slate-900 border border-slate-800'
+                  }`}>
+                    {item.isCombo
+                      ? (lang === 'zh-TW' ? '超值套餐' : lang === 'ja' ? 'お得セット' : 'Combo Set')
+                      : getCategoryLabel(item.category, lang)}
                   </span>
 
                   <button

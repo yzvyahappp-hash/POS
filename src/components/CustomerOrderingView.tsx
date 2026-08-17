@@ -23,6 +23,7 @@ import {
 import { Table, MenuItem, Order, RestaurantSettings } from '../types';
 import { audioService } from '../services/audioService';
 import { gasService } from '../services/gasService';
+import { DishCustomizationModal } from './DishCustomizationModal';
 import { useTranslation } from '../i18n/useTranslation';
 import { Language } from '../i18n/translations';
 import {
@@ -101,7 +102,11 @@ export const CustomerOrderingView: React.FC<CustomerOrderingViewProps> = ({
 
   // Filtered menu items
   const filteredMenuItems = menuItems.filter(item => {
-    const matchesCategory = activeCategory === 'All' || item.category === activeCategory;
+    const matchesCategory =
+      activeCategory === 'All' ||
+      (activeCategory === 'Combos'
+        ? item.category === 'Combos' || item.isCombo === true
+        : item.category === activeCategory);
     const translatedName = getDishName(item.name, lang).toLowerCase();
     const origName = item.name.toLowerCase();
     const query = searchQuery.toLowerCase();
@@ -130,14 +135,19 @@ export const CustomerOrderingView: React.FC<CustomerOrderingViewProps> = ({
     setItemQty(1);
   };
 
-  const handleConfirmAddToCart = () => {
+  const handleConfirmAddToCart = (chosenModifiers: string[], chosenNotes: string, finalCalculatedPrice?: number) => {
     if (!customizingItem) return;
 
+    const unitPrice = finalCalculatedPrice !== undefined ? finalCalculatedPrice : customizingItem.price;
+
     const newItem: CartItem = {
-      menuItem: customizingItem,
+      menuItem: {
+        ...customizingItem,
+        price: unitPrice,
+      },
       quantity: itemQty,
-      modifiers: selectedModifiers,
-      notes: itemNotes,
+      modifiers: chosenModifiers,
+      notes: chosenNotes,
     };
 
     setCart(prev => [...prev, newItem]);
@@ -486,9 +496,12 @@ export const CustomerOrderingView: React.FC<CustomerOrderingViewProps> = ({
               <div>
                 <div className="relative h-40 w-full overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800 mb-3">
                   <img
-                    src={item.image}
+                    src={item.image || 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80'}
                     alt={getDishName(item.name, lang)}
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80';
+                    }}
                     className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   {item.isPopular && (
@@ -574,123 +587,22 @@ export const CustomerOrderingView: React.FC<CustomerOrderingViewProps> = ({
         </div>
       )}
 
-      {/* ITEM CUSTOMIZATION MODAL */}
-      {customizingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in">
-          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
-              <h3 className="font-extrabold text-base text-gray-900 dark:text-white">
-                {lang === 'zh-TW' ? `客製化：${getDishName(customizingItem.name, lang)}` : `Customize ${customizingItem.name}`}
-              </h3>
-              <button
-                onClick={() => setCustomizingItem(null)}
-                className="rounded-xl p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
-              {/* Modifiers Selection */}
-              {customizingItem.modifiers && customizingItem.modifiers.length > 0 && (
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">
-                    {lang === 'zh-TW' ? '客製選項與偏好' : 'Preferences / Options'}
-                  </label>
-                  <div className="space-y-2">
-                    {customizingItem.modifiers.map(mod => {
-                      const isChecked = selectedModifiers.includes(mod);
-                      return (
-                        <label
-                          key={mod}
-                          onClick={() => {
-                            setSelectedModifiers(prev =>
-                              isChecked ? prev.filter(m => m !== mod) : [...prev, mod]
-                            );
-                          }}
-                          className={`flex items-center justify-between rounded-xl border p-3 cursor-pointer transition-all ${
-                            isChecked
-                              ? 'border-[#FF8A00] bg-orange-50/60 dark:bg-orange-950/30 text-gray-900 dark:text-white font-bold'
-                              : 'border-gray-200 text-gray-600 dark:border-gray-800 dark:text-gray-300'
-                          }`}
-                        >
-                          <span className="text-xs">{getModifierLabel(mod, lang)}</span>
-                          <div
-                            className={`h-4 w-4 rounded-md border flex items-center justify-center ${
-                              isChecked ? 'bg-[#FF8A00] border-[#FF8A00] text-white' : 'border-gray-300'
-                            }`}
-                          >
-                            {isChecked && <Check className="h-3 w-3" />}
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Special Notes */}
-              <div>
-                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                  {lang === 'zh-TW' ? '廚房特別交代 (備註)' : 'Special Kitchen Request'}
-                </label>
-                <input
-                  type="text"
-                  value={itemNotes}
-                  onChange={e => setItemNotes(e.target.value)}
-                  placeholder={lang === 'zh-TW' ? '例: 醬料分裝、去蔥、少鹽...' : 'e.g. Extra sauce on the side, no onion'}
-                  className="w-full rounded-xl border border-gray-200 p-2.5 text-xs focus:border-[#FF8A00] focus:ring-[#FF8A00] dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                />
-              </div>
-
-              {/* Quantity selector */}
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-xs font-bold text-gray-700 dark:text-gray-300">
-                  {lang === 'zh-TW' ? '點餐數量' : 'Quantity'}
-                </span>
-                <div className="flex items-center space-x-3 rounded-xl border border-gray-200 bg-gray-50 p-1 dark:border-gray-700 dark:bg-gray-800">
-                  <button
-                    onClick={() => setItemQty(Math.max(1, itemQty - 1))}
-                    className="rounded-lg p-1 text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700 cursor-pointer"
-                  >
-                    <Minus className="h-4 w-4" />
-                  </button>
-                  <span className="font-black text-sm px-2 text-gray-900 dark:text-white">{itemQty}</span>
-                  <button
-                    onClick={() => setItemQty(itemQty + 1)}
-                    className="rounded-lg p-1 text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700 cursor-pointer"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-2 border-t border-gray-100 pt-3 dark:border-gray-800">
-              <button
-                onClick={() => setCustomizingItem(null)}
-                className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 cursor-pointer"
-              >
-                {lang === 'zh-TW' ? '取消' : 'Cancel'}
-              </button>
-              <button
-                onClick={handleConfirmAddToCart}
-                className="rounded-xl bg-[#FF8A00] px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-[#e07900] cursor-pointer"
-              >
-                {lang === 'zh-TW'
-                  ? `加入購物車 ($${(customizingItem.price * itemQty).toFixed(2)})`
-                  : `Add to Basket ($${(customizingItem.price * itemQty).toFixed(2)})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ITEM CUSTOMIZATION MODAL WITH CHECKBOXES FOR EVERY DISH */}
+      <DishCustomizationModal
+        isOpen={!!customizingItem}
+        onClose={() => setCustomizingItem(null)}
+        item={customizingItem}
+        initialModifiers={selectedModifiers}
+        initialKitchenNote={itemNotes}
+        onConfirm={handleConfirmAddToCart}
+        lang={lang}
+      />
 
       {/* CART BASKET DRAWER / MODAL */}
       {showCartDrawer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs animate-in fade-in">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/70 p-3 sm:p-4 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg max-h-[90vh] my-auto flex flex-col rounded-3xl bg-white p-4 sm:p-6 shadow-2xl dark:bg-gray-900 border border-gray-100 dark:border-gray-800 overflow-hidden">
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
               <div className="flex items-center space-x-2">
                 <ShoppingBag className="h-5 w-5 text-[#FF8A00]" />
                 <h3 className="font-extrabold text-base text-gray-900 dark:text-white">
@@ -707,7 +619,7 @@ export const CustomerOrderingView: React.FC<CustomerOrderingViewProps> = ({
               </button>
             </div>
 
-            <div className="space-y-3 py-4 max-h-[50vh] overflow-y-auto pr-1">
+            <div className="space-y-3 py-3 overflow-y-auto flex-1 pr-1 overscroll-contain touch-pan-y">
               {cart.map((ci, idx) => (
                 <div
                   key={idx}
@@ -751,41 +663,43 @@ export const CustomerOrderingView: React.FC<CustomerOrderingViewProps> = ({
               ))}
             </div>
 
-            {/* Calculations Breakdown */}
-            <div className="space-y-1.5 border-t border-gray-100 pt-3 text-xs text-gray-600 dark:border-gray-800 dark:text-gray-300">
-              <div className="flex justify-between">
-                <span>{lang === 'zh-TW' ? '餐點小計' : 'Subtotal'}</span>
-                <span className="font-bold">${subtotal.toFixed(2)}</span>
+            {/* Calculations Breakdown & Submit Action - Sticky Bottom */}
+            <div className="shrink-0 border-t border-gray-100 pt-3 dark:border-gray-800 space-y-3 mt-auto">
+              <div className="space-y-1.5 text-xs text-gray-600 dark:text-gray-300">
+                <div className="flex justify-between">
+                  <span>{lang === 'zh-TW' ? '餐點小計' : 'Subtotal'}</span>
+                  <span className="font-bold">${subtotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-[11px] text-gray-400">
+                  <span>{lang === 'zh-TW' ? `營業稅 (${taxRate}%)` : `Tax (${taxRate}%)`}</span>
+                  <span>${taxAmount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-[11px] text-gray-400">
+                  <span>{lang === 'zh-TW' ? `服務費 (${serviceChargeRate}%)` : `Service Charge (${serviceChargeRate}%)`}</span>
+                  <span>${serviceChargeAmount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between border-t border-gray-100 pt-2 text-sm font-black text-gray-900 dark:border-gray-800 dark:text-white">
+                  <span>{lang === 'zh-TW' ? '應付總金額' : 'Total Due'}</span>
+                  <span className="text-[#FF8A00]">${totalAmount.toFixed(2)}</span>
+                </div>
               </div>
-              <div className="flex justify-between text-[11px] text-gray-400">
-                <span>{lang === 'zh-TW' ? `營業稅 (${taxRate}%)` : `Tax (${taxRate}%)`}</span>
-                <span>${taxAmount.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-[11px] text-gray-400">
-                <span>{lang === 'zh-TW' ? `服務費 (${serviceChargeRate}%)` : `Service Charge (${serviceChargeRate}%)`}</span>
-                <span>${serviceChargeAmount.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between border-t border-gray-100 pt-2 text-sm font-black text-gray-900 dark:border-gray-800 dark:text-white">
-                <span>{lang === 'zh-TW' ? '應付總金額' : 'Total Due'}</span>
-                <span className="text-[#FF8A00]">${totalAmount.toFixed(2)}</span>
-              </div>
-            </div>
 
-            {/* Submit Action */}
-            <div className="mt-4 flex justify-end space-x-2">
-              <button
-                onClick={() => setShowCartDrawer(false)}
-                className="rounded-xl border border-gray-200 px-4 py-2.5 text-xs font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 cursor-pointer"
-              >
-                {lang === 'zh-TW' ? '返回菜單' : 'Back to Menu'}
-              </button>
-              <button
-                onClick={handleSubmitOrder}
-                className="flex items-center space-x-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-2.5 text-xs font-bold text-white shadow-md hover:from-amber-600 hover:to-orange-700 cursor-pointer"
-              >
-                <CheckCircle2 className="h-4 w-4" />
-                <span>{lang === 'zh-TW' ? '確認送出訂單至廚房' : 'Confirm & Send Order to Kitchen'}</span>
-              </button>
+              {/* Submit Action */}
+              <div className="flex justify-end space-x-2 pt-1">
+                <button
+                  onClick={() => setShowCartDrawer(false)}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-xs font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 cursor-pointer"
+                >
+                  {lang === 'zh-TW' ? '返回菜單' : 'Back to Menu'}
+                </button>
+                <button
+                  onClick={handleSubmitOrder}
+                  className="flex items-center space-x-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-2.5 text-xs font-bold text-white shadow-md hover:from-amber-600 hover:to-orange-700 cursor-pointer transition-all"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>{lang === 'zh-TW' ? '確認送出訂單至廚房' : 'Confirm & Send Order to Kitchen'}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

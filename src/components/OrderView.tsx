@@ -16,6 +16,9 @@ import {
   X,
   Sparkles,
   Printer,
+  Phone,
+  Award,
+  Link2,
 } from 'lucide-react';
 import { receiptService } from '../services/receiptService';
 import {
@@ -28,6 +31,10 @@ import {
   Customer,
 } from '../types';
 import { audioService } from '../services/audioService';
+import { useTranslation } from '../i18n/useTranslation';
+import { translateCategory, translateOrderStatus, translateOrderType, translateTableStatus } from '../utils/i18nHelpers';
+import { isSameCustomer } from '../utils/customerUtils';
+import { DishCustomizationModal } from './DishCustomizationModal';
 
 interface OrderViewProps {
   menuItems: MenuItem[];
@@ -40,7 +47,9 @@ interface OrderViewProps {
   onSaveOrder: (newOrder: Order) => void;
   onCancelOrder: (orderId: string) => void;
   onProceedToCheckout: (order: Order) => void;
+  onMergeOrders?: (orderIdsToMerge: string[]) => void;
   onAddCustomer?: (customer: Customer) => void;
+  onUpdateCustomer?: (customer: Customer) => void;
 }
 
 export const OrderView: React.FC<OrderViewProps> = ({
@@ -54,10 +63,14 @@ export const OrderView: React.FC<OrderViewProps> = ({
   onSaveOrder,
   onCancelOrder,
   onProceedToCheckout,
+  onMergeOrders,
   onAddCustomer,
+  onUpdateCustomer,
 }) => {
+  const { lang, t } = useTranslation();
   const [activeTab, setActiveTab] = useState<'create' | 'history'>('create');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedOrderIdsToMerge, setSelectedOrderIdsToMerge] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Cart Form State
@@ -101,37 +114,65 @@ export const OrderView: React.FC<OrderViewProps> = ({
     }
   }, [activeOrderToEdit, selectedTableForOrder]);
 
-  // Auto-select and auto-register customer when table is selected
+  // Selected Table & Customer objects
+  const selectedTable = tables.find(t => t.id === selectedTableId || t.name === selectedTableId);
+
+  const selectedCustomer = React.useMemo(() => {
+    if (selectedCustomerId) {
+      const direct = customers.find(c => c.id === selectedCustomerId || c.name === selectedCustomerId);
+      if (direct) return direct;
+    }
+    if (orderType === 'Dine-in' && selectedTable) {
+      let targetName = selectedTable.customerName?.trim();
+      if ((!targetName || targetName === 'Walk-in Guest') && selectedTable.mergedWith && selectedTable.mergedWith.length > 0) {
+        for (const partnerId of selectedTable.mergedWith) {
+          const partner = tables.find(t => t.id === partnerId);
+          if (partner?.customerName && partner.customerName !== 'Walk-in Guest') {
+            targetName = partner.customerName.trim();
+            break;
+          }
+        }
+      }
+
+      if (targetName && targetName !== 'Walk-in Guest') {
+        const matched = customers.find(
+          c => c.id === targetName || isSameCustomer({ name: targetName }, c)
+        );
+        if (matched) return matched;
+      }
+    }
+    return undefined;
+  }, [selectedCustomerId, selectedTable, orderType, customers, tables]);
+
+  // Sync customer selection when table selection changes
   React.useEffect(() => {
     if (orderType === 'Dine-in' && selectedTableId) {
       const selectedTbl = tables.find(t => t.id === selectedTableId || t.name === selectedTableId);
-      if (selectedTbl && selectedTbl.customerName && selectedTbl.customerName !== 'Walk-in Guest') {
-        const targetName = selectedTbl.customerName.trim().toLowerCase();
-        const matched = customers.find(
-          c => c.name.trim().toLowerCase() === targetName || c.id === selectedTbl.customerName
-        );
-        if (matched) {
-          setSelectedCustomerId(matched.id);
-        } else if (onAddCustomer) {
-          // Auto-register membership for unlisted table customer
-          const newMember: Customer = {
-            id: 'cust-' + Date.now(),
-            name: selectedTbl.customerName,
-            phone: '',
-            email: '',
-            loyaltyPoints: 100,
-            visitCount: 1,
-            totalSpent: 0,
-            tier: 'Bronze',
-            favoriteDishes: [],
-            lastVisit: new Date().toISOString().split('T')[0],
-          };
-          onAddCustomer(newMember);
-          setSelectedCustomerId(newMember.id);
+      if (selectedTbl) {
+        let targetName = selectedTbl.customerName?.trim();
+        if ((!targetName || targetName === 'Walk-in Guest') && selectedTbl.mergedWith && selectedTbl.mergedWith.length > 0) {
+          for (const partnerId of selectedTbl.mergedWith) {
+            const partner = tables.find(t => t.id === partnerId);
+            if (partner?.customerName && partner.customerName !== 'Walk-in Guest') {
+              targetName = partner.customerName.trim();
+              break;
+            }
+          }
+        }
+
+        if (targetName && targetName !== 'Walk-in Guest') {
+          const matched = customers.find(
+            c => c.id === targetName || isSameCustomer({ name: targetName }, c)
+          );
+          if (matched) {
+            setSelectedCustomerId(matched.id);
+            return;
+          }
         }
       }
+      setSelectedCustomerId('');
     }
-  }, [selectedTableId, orderType, tables, customers, onAddCustomer]);
+  }, [selectedTableId, orderType, tables, customers]);
 
   // Modifier Selection Drawer State
   const [activeMenuItemForModifier, setActiveMenuItemForModifier] = useState<MenuItem | null>(null);
@@ -154,18 +195,20 @@ export const OrderView: React.FC<OrderViewProps> = ({
     setItemNote('');
   };
 
-  const handleConfirmAddToCart = () => {
+  const handleConfirmAddToCart = (chosenModifiers: string[], chosenNote: string, finalCalculatedPrice?: number) => {
     if (!activeMenuItemForModifier) return;
+
+    const unitPrice = finalCalculatedPrice !== undefined ? finalCalculatedPrice : activeMenuItemForModifier.price;
 
     const newItem: OrderItem = {
       id: 'oi-' + Date.now() + Math.random().toString(36).substring(2, 5),
       menuItemId: activeMenuItemForModifier.id,
       name: activeMenuItemForModifier.name,
-      price: activeMenuItemForModifier.price,
+      price: unitPrice,
       quantity: 1,
-      modifiers: selectedModifiers,
+      modifiers: chosenModifiers,
       addOns: [],
-      kitchenNotes: itemNote,
+      kitchenNotes: chosenNote,
       status: 'Pending',
     };
 
@@ -318,8 +361,12 @@ export const OrderView: React.FC<OrderViewProps> = ({
                   className="cursor-pointer group flex flex-col justify-between overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-2xs hover:border-[#FF8A00] hover:shadow-md transition-all dark:border-gray-800 dark:bg-gray-900"
                 >
                   <img
-                    src={item.image}
+                    src={item.image || 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80'}
                     alt={item.name}
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80';
+                    }}
                     className="h-28 w-full rounded-xl object-cover mb-2 transition-transform group-hover:scale-105"
                   />
                   <div>
@@ -336,8 +383,8 @@ export const OrderView: React.FC<OrderViewProps> = ({
           </div>
 
           {/* Right Column: Order Summary Cart (5 cols) */}
-          <div className="flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-5 shadow-lg dark:border-gray-800 dark:bg-gray-900 lg:col-span-5">
-            <div>
+          <div className="flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-lg dark:border-gray-800 dark:bg-gray-900 lg:col-span-5 lg:sticky lg:top-4 lg:max-h-[calc(100vh-100px)] lg:overflow-y-auto overscroll-contain touch-pan-y">
+            <div className="space-y-3">
               {/* Order Settings Top Bar */}
               <div className="border-b border-gray-100 pb-3 dark:border-gray-800">
                 <div className="flex items-center justify-between">
@@ -361,39 +408,149 @@ export const OrderView: React.FC<OrderViewProps> = ({
                   </div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                {/* Table & Customer Selection Controls */}
+                <div className="mt-3 space-y-2.5">
                   {orderType === 'Dine-in' && (
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-400">Select Table</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300">
+                          {lang === 'zh-TW' ? '選擇桌號 (Select Table)' : 'Select Table'}
+                        </label>
+                        {selectedTable && (
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                            {selectedTable.seats} {lang === 'zh-TW' ? '人座' : 'Seats'} • {translateTableStatus(selectedTable.status, lang)}
+                          </span>
+                        )}
+                      </div>
                       <select
                         value={selectedTableId}
                         onChange={e => setSelectedTableId(e.target.value)}
-                        className="w-full rounded-xl border border-gray-200 p-1.5 text-xs font-bold dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                        className="w-full rounded-xl border border-gray-200 bg-gray-50/80 p-2 text-xs font-bold text-gray-900 focus:border-[#FF8A00] focus:bg-white focus:outline-hidden dark:bg-gray-800 dark:border-gray-700 dark:text-white cursor-pointer shadow-2xs transition-all"
                       >
-                        {tables.map(tbl => (
-                          <option key={tbl.id} value={tbl.id}>
-                            Table {tbl.name} ({tbl.status})
-                          </option>
-                        ))}
+                        {tables.map(tbl => {
+                          const isTblMerged = tbl.mergedWith && tbl.mergedWith.length > 0;
+                          const partnerNames = isTblMerged
+                            ? tables.filter(t => tbl.mergedWith?.includes(t.id)).map(t => t.name)
+                            : [];
+                          return (
+                            <option key={tbl.id} value={tbl.id}>
+                              Table {tbl.name}{isTblMerged ? ` (併 ${partnerNames.join('+')})` : ''} ({tbl.seats} {lang === 'zh-TW' ? '人座' : 'seats'}) - {translateTableStatus(tbl.status, lang)}
+                            </option>
+                          );
+                        })}
                       </select>
+
+                      {selectedTable?.mergedWith && selectedTable.mergedWith.length > 0 && (
+                        <div className="mt-1.5 flex items-center space-x-1 text-[10px] font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/40 p-1.5 rounded-lg border border-purple-200 dark:border-purple-800">
+                          <Link2 className="h-3 w-3 shrink-0" />
+                          <span>
+                            {lang === 'zh-TW'
+                              ? `已與 ${tables.filter(t => selectedTable.mergedWith?.includes(t.id)).map(t => `Table ${t.name}`).join(', ')} 併桌用餐`
+                              : `Merged dining with ${tables.filter(t => selectedTable.mergedWith?.includes(t.id)).map(t => `Table ${t.name}`).join(', ')}`}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  <div className={orderType !== 'Dine-in' ? 'col-span-2' : ''}>
-                    <label className="block text-[10px] font-bold text-gray-400">Customer</label>
+                  {/* Customer Select Dropdown (Moved Downward) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300">
+                        {lang === 'zh-TW' ? '會員顧客綁定 (Customer)' : 'Customer Profile'}
+                      </label>
+                      {selectedCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedCustomerId('')}
+                          className="text-[10px] font-bold text-rose-500 hover:underline cursor-pointer"
+                        >
+                          {lang === 'zh-TW' ? '取消綁定' : 'Unlink Customer'}
+                        </button>
+                      )}
+                    </div>
                     <select
                       value={selectedCustomerId}
                       onChange={e => setSelectedCustomerId(e.target.value)}
-                      className="w-full rounded-xl border border-gray-200 p-1.5 text-xs font-bold dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50/80 p-2 text-xs font-bold text-gray-900 focus:border-[#FF8A00] focus:bg-white focus:outline-hidden dark:bg-gray-800 dark:border-gray-700 dark:text-white cursor-pointer shadow-2xs transition-all"
                     >
-                      <option value="">Walk-in Guest</option>
+                      <option value="">{lang === 'zh-TW' ? '散客 / 臨客 (Walk-in Guest)' : 'Walk-in Guest'}</option>
                       {customers.map(c => (
                         <option key={c.id} value={c.id}>
-                          {c.name} ({c.phone})
+                          {c.name} {c.phone ? `(${c.phone})` : '(無電話)'} {c.tier ? `• [${c.tier}]` : ''}
                         </option>
                       ))}
                     </select>
                   </div>
+
+                  {/* Customer Info Card */}
+                  {selectedCustomer ? (
+                    <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 p-3 dark:border-amber-900/40 dark:bg-amber-950/20 shadow-2xs animate-in fade-in transition-all">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center space-x-2">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FF8A00] text-white font-black text-sm shadow-xs">
+                            {selectedCustomer.name.slice(0, 1)}
+                          </div>
+                          <div>
+                            <div className="flex items-center space-x-1.5">
+                              <h4 className="font-extrabold text-xs text-gray-900 dark:text-white">
+                                {selectedCustomer.name}
+                              </h4>
+                              <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-black ${
+                                selectedCustomer.tier === 'VIP' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300' :
+                                selectedCustomer.tier === 'Gold' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' :
+                                selectedCustomer.tier === 'Silver' ? 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200' :
+                                'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300'
+                              }`}>
+                                <Sparkles className="mr-0.5 h-2.5 w-2.5" />
+                                {selectedCustomer.tier || 'Bronze'}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-gray-600 dark:text-gray-300 font-semibold">
+                              <span className="flex items-center text-emerald-700 dark:text-emerald-400 font-bold">
+                                <Phone className="mr-0.5 h-3 w-3" />
+                                {selectedCustomer.phone || (lang === 'zh-TW' ? '尚未建檔電話' : 'No Phone Number')}
+                              </span>
+                              <span>•</span>
+                              <span>{selectedCustomer.loyaltyPoints || 0} pts</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newPhone = prompt(
+                              lang === 'zh-TW' ? `請輸入 ${selectedCustomer.name} 的手機號碼:` : `Enter phone number for ${selectedCustomer.name}:`,
+                              selectedCustomer.phone || '0912-345-678'
+                            );
+                            if (newPhone !== null) {
+                              const updated = { ...selectedCustomer, phone: newPhone.trim() };
+                              if (onUpdateCustomer) {
+                                onUpdateCustomer(updated);
+                              } else if (onAddCustomer) {
+                                onAddCustomer(updated);
+                              }
+                            }
+                          }}
+                          className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[10px] font-bold text-amber-900 shadow-2xs hover:bg-amber-100 dark:bg-gray-800 dark:text-amber-200 dark:border-amber-700 cursor-pointer shrink-0"
+                          title="修改或新增顧客手機號碼"
+                        >
+                          {selectedCustomer.phone ? (lang === 'zh-TW' ? '修改電話' : 'Edit Phone') : (lang === 'zh-TW' ? '+ 補電話' : '+ Add Phone')}
+                        </button>
+                      </div>
+
+                      {selectedCustomer.notes && (
+                        <div className="mt-2 text-[10px] font-medium text-amber-900/90 dark:text-amber-200/90 bg-amber-100/60 dark:bg-amber-900/30 p-1.5 rounded-lg border border-amber-200/50">
+                          📌 {selectedCustomer.notes}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 p-2 text-center text-[10px] font-medium text-gray-400 dark:border-gray-800 dark:bg-gray-900/30">
+                      {lang === 'zh-TW' ? '未選擇會員，本筆訂單將登記為散客' : 'Walk-in guest selected'}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -475,8 +632,8 @@ export const OrderView: React.FC<OrderViewProps> = ({
               </div>
             </div>
 
-            {/* Financial Totals & Action Buttons */}
-            <div className="border-t border-gray-100 pt-3 dark:border-gray-800 space-y-2">
+            {/* Financial Totals & Action Buttons - Sticky Bottom */}
+            <div className="sticky bottom-0 z-10 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xs border-t border-gray-100 pt-3 dark:border-gray-800 space-y-2 mt-auto">
               <div className="space-y-1 text-xs text-gray-500">
                 <div className="flex justify-between">
                   <span>Subtotal:</span>
@@ -508,7 +665,7 @@ export const OrderView: React.FC<OrderViewProps> = ({
                 <button
                   onClick={handleSendToKitchen}
                   disabled={cartItems.length === 0}
-                  className="flex items-center justify-center space-x-1.5 rounded-xl bg-gray-900 py-3 text-xs font-bold text-white shadow-md hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900"
+                  className="flex items-center justify-center space-x-1.5 rounded-xl bg-gray-900 py-3 text-xs font-bold text-white shadow-md hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 cursor-pointer transition-all"
                 >
                   <ChefHat className="h-4 w-4 text-[#FF8A00]" />
                   <span>Send to Kitchen</span>
@@ -543,7 +700,7 @@ export const OrderView: React.FC<OrderViewProps> = ({
                     onProceedToCheckout(orderToCheckout);
                   }}
                   disabled={cartItems.length === 0}
-                  className="flex items-center justify-center space-x-1.5 rounded-xl bg-[#FF8A00] py-3 text-xs font-bold text-white shadow-md hover:bg-[#e07900] disabled:opacity-50"
+                  className="flex items-center justify-center space-x-1.5 rounded-xl bg-[#FF8A00] py-3 text-xs font-bold text-white shadow-md hover:bg-[#e07900] active:scale-98 disabled:opacity-50 cursor-pointer transition-all"
                 >
                   <CreditCard className="h-4 w-4" />
                   <span>Pay Now</span>
@@ -554,11 +711,37 @@ export const OrderView: React.FC<OrderViewProps> = ({
         </div>
       ) : (
         /* ORDER HISTORY TAB */
-        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs dark:border-gray-800 dark:bg-gray-900">
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs dark:border-gray-800 dark:bg-gray-900 space-y-4">
+          {onMergeOrders && (
+            <div className="flex items-center justify-between rounded-xl bg-indigo-50/80 p-3 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50">
+              <div className="text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                <span className="font-extrabold text-indigo-700 dark:text-indigo-300">Merge Orders Tool:</span> Select 2 or more unpaid orders below to combine them into one order.
+              </div>
+              <button
+                type="button"
+                disabled={selectedOrderIdsToMerge.length < 2}
+                onClick={() => {
+                  if (onMergeOrders && selectedOrderIdsToMerge.length >= 2) {
+                    onMergeOrders(selectedOrderIdsToMerge);
+                    setSelectedOrderIdsToMerge([]);
+                  }
+                }}
+                className={`rounded-xl px-4 py-1.5 text-xs font-extrabold transition-all ${
+                  selectedOrderIdsToMerge.length >= 2
+                    ? 'bg-indigo-600 text-white shadow-md hover:bg-indigo-700'
+                    : 'bg-gray-200 text-gray-400 dark:bg-gray-800 cursor-not-allowed'
+                }`}
+              >
+                🔀 Merge Selected Orders ({selectedOrderIdsToMerge.length})
+              </button>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-gray-100 text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:border-gray-800">
+                  <th className="py-3 px-2">Select</th>
                   <th className="py-3">Order Number</th>
                   <th className="py-3">Type</th>
                   <th className="py-3">Table / Customer</th>
@@ -569,141 +752,90 @@ export const OrderView: React.FC<OrderViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 font-medium dark:divide-gray-800">
-                {orders.map(ord => (
-                  <tr key={ord.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/40">
-                    <td className="py-3 font-extrabold text-gray-900 dark:text-white">
-                      {ord.orderNumber}
-                    </td>
-                    <td className="py-3">{ord.type}</td>
-                    <td className="py-3">{ord.tableName ? `Table ${ord.tableName}` : ord.customerName}</td>
-                    <td className="py-3 max-w-xs truncate text-gray-500">
-                      {ord.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
-                    </td>
-                    <td className="py-3 font-black text-[#FF8A00]">${ord.totalAmount.toFixed(2)}</td>
-                    <td className="py-3">
-                      <span
-                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                          ord.status === 'Completed'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-amber-100 text-amber-800'
-                        }`}
-                      >
-                        {ord.status}
-                      </span>
-                    </td>
-                    <td className="py-3 text-right space-x-2">
-                      <button
-                        onClick={() => receiptService.printReceipt(ord, settings)}
-                        className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-                        title="Print order thermal receipt"
-                      >
-                        <Printer className="mr-1 h-3 w-3 inline" />
-                        Print
-                      </button>
-                      <button
-                        onClick={() => onProceedToCheckout(ord)}
-                        className="rounded-lg bg-[#FF8A00] px-3 py-1 text-[11px] font-bold text-white hover:bg-[#e07900]"
-                      >
-                        Checkout
-                      </button>
-                      <button
-                        onClick={() => onCancelOrder(ord.id)}
-                        className="rounded-lg border border-rose-200 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50"
-                      >
-                        Cancel
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {orders.map(ord => {
+                  const isChecked = selectedOrderIdsToMerge.includes(ord.id);
+                  const isUnpaid = ord.paymentStatus !== 'Paid' && ord.status !== 'Cancelled';
+                  return (
+                    <tr key={ord.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/40">
+                      <td className="py-3 px-2">
+                        {isUnpaid ? (
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={e => {
+                              if (e.target.checked) {
+                                setSelectedOrderIdsToMerge(prev => [...prev, ord.id]);
+                              } else {
+                                setSelectedOrderIdsToMerge(prev => prev.filter(id => id !== ord.id));
+                              }
+                            }}
+                            className="rounded-md text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                          />
+                        ) : (
+                          <span className="text-gray-300 text-[10px]">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 font-extrabold text-gray-900 dark:text-white">
+                        {ord.orderNumber}
+                      </td>
+                      <td className="py-3">{ord.type}</td>
+                      <td className="py-3">{ord.tableName ? `Table ${ord.tableName}` : ord.customerName}</td>
+                      <td className="py-3 max-w-xs truncate text-gray-500">
+                        {ord.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                      </td>
+                      <td className="py-3 font-black text-[#FF8A00]">${ord.totalAmount.toFixed(2)}</td>
+                      <td className="py-3">
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            ord.status === 'Completed'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {ord.status}
+                        </span>
+                      </td>
+                      <td className="py-3 text-right space-x-2">
+                        <button
+                          onClick={() => receiptService.printReceipt(ord, settings)}
+                          className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                          title="Print order thermal receipt"
+                        >
+                          <Printer className="mr-1 h-3 w-3 inline" />
+                          Print
+                        </button>
+                        <button
+                          onClick={() => onProceedToCheckout(ord)}
+                          className="rounded-lg bg-[#FF8A00] px-3 py-1 text-[11px] font-bold text-white hover:bg-[#e07900]"
+                        >
+                          Checkout
+                        </button>
+                        <button
+                          onClick={() => onCancelOrder(ord.id)}
+                          className="rounded-lg border border-rose-200 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50"
+                        >
+                          Cancel
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* MODIFIER SELECTION DRAWER MODAL */}
-      {activeMenuItemForModifier && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900">
-            <div className="flex items-start justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
-              <div>
-                <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
-                  {activeMenuItemForModifier.name}
-                </h3>
-                <p className="text-xs font-bold text-[#FF8A00]">
-                  ${activeMenuItemForModifier.price.toFixed(2)}
-                </p>
-              </div>
-              <button
-                onClick={() => setActiveMenuItemForModifier(null)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Modifiers checklist */}
-            {activeMenuItemForModifier.modifiers && activeMenuItemForModifier.modifiers.length > 0 && (
-              <div className="my-4">
-                <label className="block text-xs font-bold text-gray-600 mb-2">
-                  Select Preparation Preferences
-                </label>
-                <div className="space-y-1.5">
-                  {activeMenuItemForModifier.modifiers.map(mod => (
-                    <label
-                      key={mod}
-                      className="flex items-center space-x-2 rounded-xl border border-gray-200 p-2 text-xs font-semibold hover:border-[#FF8A00] cursor-pointer dark:border-gray-800 dark:text-gray-200"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedModifiers.includes(mod)}
-                        onChange={e => {
-                          if (e.target.checked) {
-                            setSelectedModifiers(prev => [...prev, mod]);
-                          } else {
-                            setSelectedModifiers(prev => prev.filter(m => m !== mod));
-                          }
-                        }}
-                        className="rounded-md text-[#FF8A00]"
-                      />
-                      <span>{mod}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Item level note */}
-            <div className="my-3">
-              <label className="block text-xs font-bold text-gray-600 mb-1">
-                Kitchen Note for Dish
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Extra sauce, no salt..."
-                value={itemNote}
-                onChange={e => setItemNote(e.target.value)}
-                className="w-full rounded-xl border border-gray-200 p-2 text-xs font-medium dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-              />
-            </div>
-
-            <div className="flex justify-end space-x-2 pt-3">
-              <button
-                onClick={() => setActiveMenuItemForModifier(null)}
-                className="rounded-xl px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmAddToCart}
-                className="rounded-xl bg-[#FF8A00] px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-[#e07900]"
-              >
-                Add to Cart
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* DISH CUSTOMIZATION MODAL WITH CHECKBOXES FOR EVERY DISH */}
+      <DishCustomizationModal
+        isOpen={!!activeMenuItemForModifier}
+        onClose={() => setActiveMenuItemForModifier(null)}
+        item={activeMenuItemForModifier}
+        initialModifiers={selectedModifiers}
+        initialKitchenNote={itemNote}
+        onConfirm={handleConfirmAddToCart}
+        lang={lang}
+      />
     </div>
   );
 };

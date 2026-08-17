@@ -3,11 +3,16 @@ import {
   Package,
   AlertTriangle,
   Plus,
+  Minus,
   Truck,
   Edit2,
   Trash2,
   Search,
   CheckCircle,
+  TrendingDown,
+  TrendingUp,
+  Sliders,
+  X,
 } from 'lucide-react';
 import { InventoryItem, Supplier } from '../types';
 
@@ -27,6 +32,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [activeTab, setActiveTab] = useState<'ingredients' | 'suppliers'>('ingredients');
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // Modal State for Custom Adjustments
+  const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null);
+  const [adjustMode, setAdjustMode] = useState<'deduct' | 'restock' | 'set'>('deduct');
+  const [adjustAmount, setAdjustAmount] = useState<number>(1);
 
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Meat & Seafood');
@@ -55,6 +65,25 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     };
     onAddInventoryItem(item);
     setShowAddModal(false);
+  };
+
+  const handleApplyAdjustment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adjustItem) return;
+
+    let finalStock = adjustItem.stockQuantity;
+    const qty = Number(adjustAmount) || 0;
+
+    if (adjustMode === 'deduct') {
+      finalStock = adjustItem.stockQuantity - qty;
+    } else if (adjustMode === 'restock') {
+      finalStock = adjustItem.stockQuantity + qty;
+    } else {
+      finalStock = qty;
+    }
+
+    onUpdateStock(adjustItem.id, Number(finalStock.toFixed(2)));
+    setAdjustItem(null);
   };
 
   return (
@@ -117,27 +146,40 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   <th className="py-3">Supplier</th>
                   <th className="py-3">Last Restocked</th>
                   <th className="py-3">Status</th>
-                  <th className="py-3 text-right">Quick Restock</th>
+                  <th className="py-3 text-right">Stock Actions & Usage</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 font-medium dark:divide-gray-800">
                 {filteredInventory.map(item => {
-                  const isLow = item.stockQuantity <= item.minStockAlert;
+                  const isDeficit = item.stockQuantity < 0;
+                  const isLow = !isDeficit && item.stockQuantity <= item.minStockAlert;
                   return (
                     <tr key={item.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/40">
                       <td className="py-3 font-extrabold text-gray-900 dark:text-white">
                         {item.name}
                       </td>
                       <td className="py-3 text-gray-500">{item.category}</td>
-                      <td className="py-3 font-bold text-gray-900 dark:text-white">
-                        {item.stockQuantity} {item.unit}
+                      <td className="py-3 font-bold">
+                        <span className={isDeficit ? 'text-rose-600 font-black dark:text-rose-400' : 'text-gray-900 dark:text-white'}>
+                          {item.stockQuantity} {item.unit}
+                        </span>
+                        {isDeficit && (
+                          <span className="ml-1.5 rounded-sm bg-rose-100 px-1 py-0.5 text-[9px] font-extrabold text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                            DEFICIT
+                          </span>
+                        )}
                       </td>
                       <td className="py-3">${item.costPerUnit.toFixed(2)}</td>
                       <td className="py-3">{item.supplierName}</td>
                       <td className="py-3 text-gray-400">{item.lastRestocked}</td>
                       <td className="py-3">
-                        {isLow ? (
+                        {isDeficit ? (
                           <span className="inline-flex items-center space-x-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                            <AlertTriangle className="h-3 w-3" />
+                            <span>Deficit</span>
+                          </span>
+                        ) : isLow ? (
+                          <span className="inline-flex items-center space-x-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                             <AlertTriangle className="h-3 w-3" />
                             <span>Low Stock</span>
                           </span>
@@ -148,13 +190,59 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           </span>
                         )}
                       </td>
-                      <td className="py-3 text-right space-x-1">
-                        <button
-                          onClick={() => onUpdateStock(item.id, item.stockQuantity + 5)}
-                          className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-emerald-700"
-                        >
-                          +5 Restock
-                        </button>
+                      <td className="py-3 text-right">
+                        <div className="flex items-center justify-end space-x-1">
+                          {/* Quick Deduction / Usage Buttons */}
+                          <button
+                            type="button"
+                            onClick={() => onUpdateStock(item.id, Number((item.stockQuantity - 1).toFixed(2)))}
+                            className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-800 shadow-xs hover:bg-amber-100 active:scale-95 transition-all dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300"
+                            title="Deduct 1 unit (used)"
+                          >
+                            -1 Use
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateStock(item.id, Number((item.stockQuantity - 5).toFixed(2)))}
+                            className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-800 shadow-xs hover:bg-rose-100 active:scale-95 transition-all dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300"
+                            title="Deduct 5 units (used)"
+                          >
+                            -5 Use
+                          </button>
+
+                          {/* Quick Restock Buttons */}
+                          <button
+                            type="button"
+                            onClick={() => onUpdateStock(item.id, Number((item.stockQuantity + 5).toFixed(2)))}
+                            className="rounded-lg bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition-all"
+                            title="Add 5 units to stock"
+                          >
+                            +5 Restock
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateStock(item.id, Number((item.stockQuantity + 10).toFixed(2)))}
+                            className="rounded-lg bg-indigo-600 px-2 py-1 text-[10px] font-bold text-white shadow-xs hover:bg-indigo-700 active:scale-95 transition-all"
+                            title="Add 10 units to stock"
+                          >
+                            +10 Restock
+                          </button>
+
+                          {/* Detailed Modal Trigger */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdjustItem(item);
+                              setAdjustMode('deduct');
+                              setAdjustAmount(1);
+                            }}
+                            className="flex items-center space-x-1 rounded-lg border border-gray-300 bg-white px-2 py-1 text-[10px] font-bold text-gray-700 shadow-xs hover:bg-gray-50 active:scale-95 transition-all dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                            title="Custom usage or restock adjustment"
+                          >
+                            <Sliders className="h-3 w-3" />
+                            <span>Adjust</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -186,6 +274,149 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* CUSTOM STOCK ADJUSTMENT & USAGE MODAL */}
+      {adjustItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
+              <div>
+                <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
+                  Stock Adjustment
+                </h3>
+                <p className="text-xs font-semibold text-[#FF8A00]">{adjustItem.name}</p>
+              </div>
+              <button
+                onClick={() => setAdjustItem(null)}
+                className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleApplyAdjustment} className="mt-4 space-y-4">
+              {/* Current Stock Banner */}
+              <div className="flex items-center justify-between rounded-xl bg-gray-50 p-3 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800">
+                <span className="text-xs font-bold text-gray-500 dark:text-gray-400">Current Stock</span>
+                <span className={`text-sm font-black ${adjustItem.stockQuantity < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-gray-900 dark:text-white'}`}>
+                  {adjustItem.stockQuantity} {adjustItem.unit}
+                </span>
+              </div>
+
+              {/* Adjustment Mode selector */}
+              <div>
+                <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1.5">
+                  Adjustment Type
+                </label>
+                <div className="grid grid-cols-3 gap-1.5 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
+                  <button
+                    type="button"
+                    onClick={() => setAdjustMode('deduct')}
+                    className={`flex items-center justify-center space-x-1 rounded-lg py-2 text-xs font-bold transition-all ${
+                      adjustMode === 'deduct'
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-gray-600 hover:text-gray-900 dark:text-gray-400'
+                    }`}
+                  >
+                    <TrendingDown className="h-3.5 w-3.5" />
+                    <span>Use / Deduct</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAdjustMode('restock')}
+                    className={`flex items-center justify-center space-x-1 rounded-lg py-2 text-xs font-bold transition-all ${
+                      adjustMode === 'restock'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-gray-600 hover:text-gray-900 dark:text-gray-400'
+                    }`}
+                  >
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    <span>Restock</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAdjustMode('set')}
+                    className={`flex items-center justify-center space-x-1 rounded-lg py-2 text-xs font-bold transition-all ${
+                      adjustMode === 'set'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-gray-600 hover:text-gray-900 dark:text-gray-400'
+                    }`}
+                  >
+                    <Sliders className="h-3.5 w-3.5" />
+                    <span>Set Exact</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Amount Input */}
+              <div>
+                <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">
+                  {adjustMode === 'deduct' && `Quantity Used (${adjustItem.unit})`}
+                  {adjustMode === 'restock' && `Quantity Added (${adjustItem.unit})`}
+                  {adjustMode === 'set' && `New Stock Quantity (${adjustItem.unit}) — can be negative`}
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={adjustAmount}
+                  onChange={e => setAdjustAmount(parseFloat(e.target.value) || 0)}
+                  className="w-full rounded-xl border border-gray-200 p-2.5 text-sm font-bold dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                  required
+                />
+              </div>
+
+              {/* Live Preview Result */}
+              {(() => {
+                const qty = Number(adjustAmount) || 0;
+                let calculated = adjustItem.stockQuantity;
+                if (adjustMode === 'deduct') calculated -= qty;
+                else if (adjustMode === 'restock') calculated += qty;
+                else calculated = qty;
+                calculated = Number(calculated.toFixed(2));
+
+                const isNeg = calculated < 0;
+
+                return (
+                  <div className={`flex items-center justify-between rounded-xl p-3 text-xs font-bold border ${
+                    isNeg
+                      ? 'bg-rose-50 border-rose-200 text-rose-900 dark:bg-rose-950/50 dark:border-rose-900 dark:text-rose-300'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-900 dark:bg-emerald-950/50 dark:border-emerald-900 dark:text-emerald-300'
+                  }`}>
+                    <span>Resulting Stock:</span>
+                    <span className="text-sm font-black">
+                      {calculated} {adjustItem.unit} {isNeg && '(Deficit)'}
+                    </span>
+                  </div>
+                );
+              })()}
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAdjustItem(null)}
+                  className="rounded-xl px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className={`rounded-xl px-4 py-2 text-xs font-bold text-white shadow-md transition-all ${
+                    adjustMode === 'deduct'
+                      ? 'bg-rose-600 hover:bg-rose-700'
+                      : adjustMode === 'restock'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-indigo-600 hover:bg-indigo-700'
+                  }`}
+                >
+                  Apply {adjustMode === 'deduct' ? 'Usage' : adjustMode === 'restock' ? 'Restock' : 'Adjustment'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

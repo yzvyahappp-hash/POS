@@ -8,6 +8,7 @@ interface AuthModalProps {
   users: User[];
   onLogin: (user: User) => void;
   onCreateAccount: (newUser: User) => void;
+  onResetPassword?: (email: string, newPin: string) => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -16,6 +17,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   users,
   onLogin,
   onCreateAccount,
+  onResetPassword,
 }) => {
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
   const [email, setEmail] = useState('');
@@ -25,6 +27,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [rememberMe, setRememberMe] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
+  const [newResetPin, setNewResetPin] = useState('0000');
 
   if (!isOpen) return null;
 
@@ -35,11 +38,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedPin = pin.trim();
 
+    if (!trimmedEmail || !trimmedPin) {
+      setErrorMsg('Please enter both your email address and PIN code.');
+      return;
+    }
+
     const matchesIdentity = (u: User, q: string): boolean => {
       if (!q) return false;
       const emailLower = (u.email || '').toLowerCase();
       const nameLower = (u.name || '').toLowerCase();
-      const roleLower = (u.role || '').toLowerCase();
       const emailPrefix = emailLower.split('@')[0];
       const firstName = nameLower.split(' ')[0];
 
@@ -47,10 +54,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         emailLower === q ||
         emailPrefix === q ||
         nameLower === q ||
-        firstName === q ||
-        roleLower === q ||
-        (emailLower.includes(q) && q.length >= 3) ||
-        (nameLower.includes(q) && q.length >= 3)
+        firstName === q
       );
     };
 
@@ -58,60 +62,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return String(u.pin || (u as any).pinCode || '').trim();
     };
 
-    const matchesPin = (u: User, q: string): boolean => {
-      if (!q) return false;
-      const userPin = getUserPin(u);
-      return userPin === q || userPin === '' || q === '1234';
-    };
-
     let matchedUser: User | undefined;
 
     if (users && users.length > 0) {
-      if (trimmedEmail && trimmedPin) {
-        // 1. Check exact identity + pin match
-        matchedUser = users.find(u => matchesIdentity(u, trimmedEmail) && getUserPin(u) === trimmedPin);
-        // 2. Check general identity + pin match
-        if (!matchedUser) {
-          matchedUser = users.find(u => matchesIdentity(u, trimmedEmail) && matchesPin(u, trimmedPin));
-        }
-        // 3. Check swapped (top is PIN, bottom is identity)
-        if (!matchedUser) {
-          matchedUser = users.find(u => matchesIdentity(u, trimmedPin) && matchesPin(u, trimmedEmail));
-        }
-        // 4. Both fields are PINs
-        if (!matchedUser) {
-          matchedUser = users.find(u => getUserPin(u) === trimmedPin || getUserPin(u) === trimmedEmail);
-        }
-        // 5. Fallback match by identity
-        if (!matchedUser) {
-          matchedUser = users.find(u => matchesIdentity(u, trimmedEmail));
-        }
-      } else if (trimmedEmail) {
-        // User typed into top field
-        matchedUser = users.find(u => getUserPin(u) === trimmedEmail);
-        if (!matchedUser) {
-          matchedUser = users.find(u => matchesIdentity(u, trimmedEmail));
-        }
-      } else if (trimmedPin) {
-        // User typed into PIN field
-        matchedUser = users.find(u => getUserPin(u) === trimmedPin);
-        if (!matchedUser) {
-          matchedUser = users.find(u => matchesIdentity(u, trimmedPin));
-        }
-      }
+      matchedUser = users.find(
+        u => matchesIdentity(u, trimmedEmail) && getUserPin(u) === trimmedPin
+      );
     }
 
     if (matchedUser) {
       onLogin(matchedUser);
       onClose();
     } else {
-      setErrorMsg('Invalid email or PIN code. Please try again or use a quick role button below.');
+      setErrorMsg('Invalid email or passcode. Please check your credentials.');
     }
-  };
-
-  const handleQuickLogin = (selectedUser: User) => {
-    onLogin(selectedUser);
-    onClose();
   };
 
   const handleSignupSubmit = (e: React.FormEvent) => {
@@ -139,10 +103,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleForgotSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) {
-      setErrorMsg('Please enter your email.');
+    const query = email.trim().toLowerCase();
+    if (!query) {
+      setErrorMsg('Please enter your email address.');
       return;
     }
+
+    const targetUser = users.find(
+      u => u.email?.toLowerCase() === query || u.name?.toLowerCase() === query
+    );
+
+    if (!targetUser) {
+      setErrorMsg('No user account found with this email address.');
+      return;
+    }
+
+    const resetPin = '0000';
+    targetUser.pin = resetPin;
+    if ((targetUser as any).pinCode) {
+      (targetUser as any).pinCode = resetPin;
+    }
+
+    if (onResetPassword) {
+      onResetPassword(targetUser.email, resetPin);
+    }
+
+    setNewResetPin(resetPin);
     setResetSuccess(true);
     setErrorMsg('');
   };
@@ -168,7 +154,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {mode === 'forgot' && 'Reset Staff Passcode'}
           </h2>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            {mode === 'login' && 'Authorized personnel only. Select profile or enter 4-digit PIN.'}
+            {mode === 'login' && 'Authorized personnel only. Please sign in with your email and passcode.'}
             {mode === 'forgot' && 'Send passcode reset link to staff email.'}
           </p>
         </div>
@@ -184,13 +170,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <form onSubmit={handleLoginSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Email or Quick PIN Code
+                Email Address
               </label>
               <div className="relative">
                 <Mail className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="admin@bistro.com or 1234"
+                  placeholder="alex@bistro.com"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   className="w-full rounded-xl border border-gray-300 bg-white py-2 pl-9 pr-3 text-xs font-bold text-black placeholder-gray-400 focus:border-[#FF8A00] focus:bg-white focus:outline-hidden dark:border-gray-600 dark:bg-white dark:text-black"
@@ -327,13 +313,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="rounded-xl bg-emerald-50 p-4 text-center dark:bg-emerald-950/40">
                 <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500 mb-2" />
                 <h4 className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
-                  Password Reset Sent
+                  Passcode Successfully Reset
                 </h4>
-                <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
-                  Check your email inbox for instructions to update your passcode.
+                <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
+                  Your PIN code has been reset to: <strong className="text-emerald-900 dark:text-emerald-100 font-extrabold text-sm px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900">{newResetPin}</strong>
+                </p>
+                <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                  Please use PIN <strong className="font-bold">{newResetPin}</strong> to sign in to your staff account now.
                 </p>
                 <button
                   onClick={() => {
+                    setPin(newResetPin);
                     setMode('login');
                     setResetSuccess(false);
                   }}
@@ -368,31 +358,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
 
-        {/* Quick Demo Switch Role Preset Buttons */}
-        {mode === 'login' && (
-          <div className="mt-6 border-t border-gray-100 pt-4 dark:border-gray-800">
-            <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2 text-center">
-              Quick Role Test Logins
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              {users.map(u => (
-                <button
-                  key={u.id}
-                  onClick={() => handleQuickLogin(u)}
-                  className="flex items-center space-x-2 rounded-xl border border-gray-200 bg-gray-50 p-2 text-left hover:border-[#FF8A00] hover:bg-orange-50/50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
-                >
-                  <img src={u.avatar} alt={u.name} className="h-7 w-7 rounded-full object-cover" />
-                  <div className="overflow-hidden">
-                    <p className="truncate text-[11px] font-bold text-gray-800 dark:text-gray-200">
-                      {u.name}
-                    </p>
-                    <p className="text-[9px] font-semibold text-[#FF8A00]">{u.role}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+
 
         {/* Footer Note */}
         <div className="mt-4 text-center text-xs text-gray-400">

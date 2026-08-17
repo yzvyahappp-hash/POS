@@ -19,31 +19,48 @@ import {
   Check,
   X,
   Share2,
+  User,
+  Phone,
+  Link2,
+  Unlink,
+  Receipt,
+  Utensils,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Table, TableStatus, TableShape, FloorZone, Order } from '../types';
+import { Table, TableStatus, TableShape, FloorZone, Order, Customer, Reservation } from '../types';
+import { useTranslation } from '../i18n/useTranslation';
+import { translateTableStatus } from '../utils/i18nHelpers';
 
 interface FloorPlanViewProps {
   tables: Table[];
   orders: Order[];
+  customers?: Customer[];
+  reservations?: Reservation[];
   onUpdateTable: (table: Table) => void;
   onAddTable: (newTable: Table) => void;
   onDeleteTable: (tableId: string) => void;
   onOpenTableOrder: (table: Table) => void;
   onTransferTableOrder: (fromTableId: string, toTableId: string) => void;
   onMergeTables: (tableId1: string, tableId2: string) => void;
+  onUnmergeTable?: (tableId: string) => void;
+  onUpdateCustomer?: (customer: Customer) => void;
 }
 
 export const FloorPlanView: React.FC<FloorPlanViewProps> = ({
   tables,
   orders,
+  customers = [],
+  reservations = [],
   onUpdateTable,
   onAddTable,
   onDeleteTable,
   onOpenTableOrder,
   onTransferTableOrder,
   onMergeTables,
+  onUnmergeTable,
+  onUpdateCustomer,
 }) => {
+  const { lang, t } = useTranslation();
   const [selectedZone, setSelectedZone] = useState<FloorZone | 'All'>('All');
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
@@ -55,6 +72,88 @@ export const FloorPlanView: React.FC<FloorPlanViewProps> = ({
   const [qrModalTable, setQrModalTable] = useState<Table | null>(null);
   const [showAllQrModal, setShowAllQrModal] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+
+  // Helper to resolve customer info for a table (checking direct table, merged partner tables, active orders, and reservations)
+  const getTableCustomerInfo = (tbl: Table) => {
+    const isMerged = !!(tbl.mergedWith && tbl.mergedWith.length > 0);
+    const partnerTables = tbl.mergedWith
+      ? tables.filter(t => tbl.mergedWith?.includes(t.id))
+      : [];
+    const mergedTableNames = partnerTables.map(t => t.name);
+    const allClusterTables = [tbl, ...partnerTables];
+    const combinedSeats = allClusterTables.reduce((sum, t) => sum + (t.seats || 0), 0);
+
+    // 1. Check direct table customer
+    let name = tbl.customerName && tbl.customerName !== 'Walk-in Guest' ? tbl.customerName : undefined;
+
+    // 2. Check partner merged tables
+    if (!name && partnerTables.length > 0) {
+      for (const pt of partnerTables) {
+        if (pt.customerName && pt.customerName !== 'Walk-in Guest') {
+          name = pt.customerName;
+          break;
+        }
+      }
+    }
+
+    // 3. Check active orders across this table or merged tables
+    const clusterIds = allClusterTables.map(t => t.id);
+    const clusterNames = allClusterTables.map(t => t.name.trim().toLowerCase());
+    
+    const activeOrder = orders.find(
+      o =>
+        o.status !== 'Completed' &&
+        o.status !== 'Cancelled' &&
+        ((o.tableId && clusterIds.includes(o.tableId)) ||
+          (o.tableName && clusterNames.includes(o.tableName.trim().toLowerCase())) ||
+          (o.tableName && clusterNames.some(cn => o.tableName.toLowerCase().includes(cn))))
+    );
+
+    let phone = activeOrder?.customerPhone || '';
+    if (!name && activeOrder?.customerName && activeOrder.customerName !== 'Walk-in Guest') {
+      name = activeOrder.customerName;
+    }
+
+    // 4. Check today's active reservations
+    const activeRes = reservations.find(
+      r =>
+        r.status === 'Seated' &&
+        ((r.tableId && clusterIds.includes(r.tableId)) ||
+          (r.tableName && clusterNames.includes(r.tableName.trim().toLowerCase())) ||
+          (r.tableName && clusterNames.some(cn => r.tableName.toLowerCase().includes(cn))))
+    );
+
+    if (!name && activeRes?.customerName) {
+      name = activeRes.customerName;
+      phone = activeRes.phone || phone;
+    }
+
+    // 5. Match customer profile from customers database
+    let customerObj: Customer | undefined;
+    if (name) {
+      customerObj = customers.find(
+        c =>
+          c.name.trim().toLowerCase() === name?.trim().toLowerCase() ||
+          (phone && c.phone === phone)
+      );
+      if (customerObj && customerObj.phone) {
+        phone = customerObj.phone;
+      }
+    }
+
+    return {
+      customerName: name,
+      customerPhone: phone,
+      customer: customerObj,
+      activeOrder,
+      activeRes,
+      isMerged,
+      partnerTables,
+      mergedTableNames,
+      allClusterTables,
+      combinedSeats,
+    };
+  };
 
   // New Table Form state
   const [newNumber, setNewNumber] = useState<number>(tables.length + 1);
@@ -213,10 +312,8 @@ export const FloorPlanView: React.FC<FloorPlanViewProps> = ({
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 mt-6">
             {filteredTables.map(tbl => {
-              const activeOrder = orders.find(
-                o => o.id === tbl.currentOrderId || (o.tableName === tbl.name && o.status !== 'Completed')
-              );
-
+              const info = getTableCustomerInfo(tbl);
+              const activeOrder = info.activeOrder;
               const isSelected = selectedTable?.id === tbl.id;
 
               const statusStyles = {
@@ -236,7 +333,7 @@ export const FloorPlanView: React.FC<FloorPlanViewProps> = ({
                 <div
                   key={tbl.id}
                   onClick={() => setSelectedTable(tbl)}
-                  className={`group relative flex flex-col items-center justify-center p-4 border-2 cursor-pointer shadow-2xs transition-all transform hover:scale-[1.02] ${
+                  className={`group relative flex flex-col items-center justify-center p-3.5 border-2 cursor-pointer shadow-2xs transition-all transform hover:scale-[1.02] ${
                     statusStyles[tbl.status]
                   } ${shapeStyles[tbl.shape]} ${isSelected ? 'ring-2 ring-[#FF8A00] scale-[1.02] shadow-md' : ''}`}
                 >
@@ -252,30 +349,49 @@ export const FloorPlanView: React.FC<FloorPlanViewProps> = ({
                     <QrCode className="h-3.5 w-3.5" />
                   </button>
 
-                  <span className="text-lg font-bold text-gray-900 dark:text-white">{tbl.name}</span>
+                  {/* Merged Table Tag Badge */}
+                  {info.isMerged && (
+                    <span className="absolute top-1.5 right-1.5 flex items-center space-x-0.5 rounded-md bg-purple-600 px-1.5 py-0.5 text-[9px] font-black text-white shadow-xs">
+                      <Link2 className="h-2.5 w-2.5" />
+                      <span>併 {info.mergedTableNames.join('+')}</span>
+                    </span>
+                  )}
+
+                  {/* Table Name & Seats */}
+                  <div className="flex items-center space-x-1">
+                    <span className="text-base font-black text-gray-900 dark:text-white">{tbl.name}</span>
+                    <span className="text-[10px] font-bold text-gray-400">({tbl.seats}座)</span>
+                  </div>
                   
+                  {/* Order Total or Status Label */}
                   {tbl.status === 'Occupied' && activeOrder ? (
-                    <span className="text-[10px] uppercase font-semibold text-[#FF8A00] mt-1">
+                    <span className="text-[11px] uppercase font-black text-[#FF8A00] mt-0.5">
                       ${(activeOrder.totalAmount || 0).toFixed(2)}
                     </span>
                   ) : (
-                    <span className={`text-[10px] uppercase font-semibold mt-1 ${
+                    <span className={`text-[10px] uppercase font-bold mt-0.5 ${
                       tbl.status === 'Available' ? 'text-gray-400' : tbl.status === 'Reserved' ? 'text-blue-600' : 'text-indigo-600'
                     }`}>
                       {tbl.status}
                     </span>
                   )}
 
-                  {tbl.status === 'Reserved' && tbl.customerName && (
-                    <span className="mt-1 truncate max-w-[90%] text-[9px] font-bold text-amber-800 dark:text-amber-200">
-                      {tbl.customerName}
-                    </span>
-                  )}
-
-                  {tbl.mergedWith && tbl.mergedWith.length > 0 && (
-                    <span className="absolute top-1 right-1 rounded-md bg-purple-600 px-1 text-[8px] font-bold text-white">
-                      Merged
-                    </span>
+                  {/* Customer Card Tag on Table (Visible for Occupied, Reserved, or Merged tables) */}
+                  {info.customerName && (
+                    <div className="mt-1 flex items-center space-x-1 max-w-[95%] px-1.5 py-0.5 rounded-md bg-amber-100/90 dark:bg-amber-950/80 border border-amber-300/80 dark:border-amber-800 text-amber-950 dark:text-amber-200 shadow-2xs animate-in fade-in">
+                      <User className="h-2.5 w-2.5 text-[#FF8A00] shrink-0" />
+                      <span className="truncate text-[9px] font-black">{info.customerName}</span>
+                      {info.customer?.tier && (
+                        <span className={`text-[8px] font-black px-1 rounded shrink-0 ${
+                          info.customer.tier === 'VIP' ? 'bg-purple-600 text-white' :
+                          info.customer.tier === 'Gold' ? 'bg-amber-500 text-white' :
+                          info.customer.tier === 'Silver' ? 'bg-slate-500 text-white' :
+                          'bg-orange-500 text-white'
+                        }`}>
+                          {info.customer.tier}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               );
@@ -285,110 +401,284 @@ export const FloorPlanView: React.FC<FloorPlanViewProps> = ({
 
         {/* Selected Table Inspector Drawer */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-md dark:border-gray-800 dark:bg-gray-900">
-          {selectedTable ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
-                <div>
-                  <h3 className="text-lg font-black text-gray-900 dark:text-white">
-                    Table {selectedTable.name}
-                  </h3>
-                  <p className="text-xs text-gray-400">
-                    Zone: {selectedTable.zone} • {selectedTable.seats} Seats
-                  </p>
-                </div>
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-bold ${
-                    selectedTable.status === 'Available'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : selectedTable.status === 'Occupied'
-                      ? 'bg-rose-100 text-rose-800'
-                      : selectedTable.status === 'Reserved'
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-indigo-100 text-indigo-800'
-                  }`}
-                >
-                  {selectedTable.status}
-                </span>
-              </div>
+          {selectedTable ? (() => {
+            const selectedInfo = getTableCustomerInfo(selectedTable);
+            const activeOrder = selectedInfo.activeOrder;
+            const customerObj = selectedInfo.customer;
 
-              {/* Status Updater */}
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1">
-                  Change Status
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['Available', 'Occupied', 'Reserved', 'Cleaning'] as TableStatus[]).map(st => (
-                    <button
-                      key={st}
-                      onClick={() => handleStatusChange(st)}
-                      className={`rounded-xl border py-1.5 text-xs font-bold transition-all ${
-                        selectedTable.status === st
-                          ? 'border-[#FF8A00] bg-orange-50 text-[#FF8A00] dark:bg-orange-950/40'
-                          : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300'
-                      }`}
-                    >
-                      {st}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Table Action Buttons */}
-              <div className="space-y-2 pt-2">
-                <button
-                  onClick={() => onOpenTableOrder(selectedTable)}
-                  className="w-full flex items-center justify-center space-x-2 rounded-xl bg-[#FF8A00] py-2.5 text-xs font-bold text-white shadow-md hover:bg-[#e07900]"
-                >
-                  <Users className="h-4 w-4" />
-                  <span>
-                    {selectedTable.status === 'Occupied' ? 'View / Edit Order' : 'Create Table Order'}
+            return (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
+                  <div>
+                    <h3 className="text-lg font-black text-gray-900 dark:text-white flex items-center space-x-2">
+                      <span>Table {selectedTable.name}</span>
+                      {selectedInfo.isMerged && (
+                        <span className="inline-flex items-center space-x-1 rounded-md bg-purple-100 px-2 py-0.5 text-xs font-black text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                          <Link2 className="h-3 w-3" />
+                          <span>已併桌 (+{selectedInfo.mergedTableNames.join(', ')})</span>
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-gray-400">
+                      Zone: {selectedTable.zone} • {selectedTable.seats} Seats {selectedInfo.isMerged ? `(群組共 ${selectedInfo.combinedSeats} 座)` : ''}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-bold ${
+                      selectedTable.status === 'Available'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : selectedTable.status === 'Occupied'
+                        ? 'bg-rose-100 text-rose-800'
+                        : selectedTable.status === 'Reserved'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-indigo-100 text-indigo-800'
+                    }`}
+                  >
+                    {selectedTable.status}
                   </span>
-                </button>
-
-                <button
-                  onClick={() => setQrModalTable(selectedTable)}
-                  className="w-full flex items-center justify-center space-x-2 rounded-xl border border-amber-300 bg-amber-50 py-2.5 text-xs font-bold text-amber-900 shadow-xs hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300 transition-all"
-                >
-                  <QrCode className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                  <span>Table Ordering QR Stand</span>
-                </button>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setShowTransferModal(true)}
-                    className="flex items-center justify-center space-x-1 rounded-xl border border-gray-200 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300"
-                  >
-                    <ArrowRightLeft className="h-3.5 w-3.5 text-[#FF8A00]" />
-                    <span>Transfer Table</span>
-                  </button>
-
-                  <button
-                    onClick={() => setShowMergeModal(true)}
-                    className="flex items-center justify-center space-x-1 rounded-xl border border-gray-200 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300"
-                  >
-                    <Minimize2 className="h-3.5 w-3.5 text-purple-600" />
-                    <span>Merge Tables</span>
-                  </button>
                 </div>
 
-                <button
-                  onClick={() => {
-                    if (confirm(`Are you sure you want to delete Table ${selectedTable.name}?`)) {
-                      onDeleteTable(selectedTable.id);
-                      setSelectedTable(null);
-                    }
-                  }}
-                  className="w-full flex items-center justify-center space-x-1 rounded-xl border border-rose-200 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-400"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  <span>Delete Table</span>
-                </button>
+                {/* Merged Tables Cluster Banner */}
+                {selectedInfo.isMerged && (
+                  <div className="rounded-xl border border-purple-200 bg-purple-50/70 p-3 dark:border-purple-900/40 dark:bg-purple-950/20 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-600 text-white">
+                          <Link2 className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-extrabold text-purple-950 dark:text-purple-200">
+                            併桌群組 (Merged Tables)
+                          </div>
+                          <div className="text-[11px] text-purple-700 dark:text-purple-300 font-semibold">
+                            {selectedInfo.allClusterTables.map(t => `${t.name} (${t.seats}人)`).join(' + ')} • 共 {selectedInfo.combinedSeats} 席
+                          </div>
+                        </div>
+                      </div>
+                      {onUnmergeTable && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUnmergeTable(selectedTable.id);
+                            setSelectedTable({ ...selectedTable, mergedWith: undefined });
+                          }}
+                          className="flex items-center space-x-1 rounded-lg border border-purple-300 bg-white px-2 py-1 text-[10px] font-bold text-purple-700 hover:bg-purple-100 dark:bg-gray-800 dark:text-purple-300 dark:border-purple-700 cursor-pointer shadow-2xs"
+                          title="解除此桌的併桌關聯"
+                        >
+                          <Unlink className="h-3 w-3" />
+                          <span>解除併桌</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Customer Info Card */}
+                {selectedInfo.customerName ? (
+                  <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 p-3.5 dark:border-amber-900/40 dark:bg-amber-950/20 shadow-2xs animate-in fade-in transition-all">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF8A00] text-white font-black text-base shadow-xs">
+                          {selectedInfo.customerName.slice(0, 1)}
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-1.5">
+                            <h4 className="font-black text-sm text-gray-900 dark:text-white">
+                              {selectedInfo.customerName}
+                            </h4>
+                            <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-black ${
+                              customerObj?.tier === 'VIP' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300' :
+                              customerObj?.tier === 'Gold' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' :
+                              customerObj?.tier === 'Silver' ? 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200' :
+                              'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300'
+                            }`}>
+                              <Sparkles className="mr-0.5 h-2.5 w-2.5" />
+                              {customerObj?.tier || 'Bronze'}
+                            </span>
+                            {selectedInfo.isMerged && (
+                              <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-950/60 px-1 py-0.2 rounded">
+                                併桌顧客
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-gray-600 dark:text-gray-300 font-semibold">
+                            <span className="flex items-center text-emerald-700 dark:text-emerald-400 font-bold">
+                              <Phone className="mr-1 h-3 w-3" />
+                              {selectedInfo.customerPhone || customerObj?.phone || (lang === 'zh-TW' ? '尚未建檔電話' : 'No Phone')}
+                            </span>
+                            {customerObj && (
+                              <>
+                                <span>•</span>
+                                <span>{customerObj.loyaltyPoints || 0} pts</span>
+                                <span>•</span>
+                                <span>{customerObj.visitCount || 1} 次到店</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {customerObj && onUpdateCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newPhone = prompt(
+                              lang === 'zh-TW' ? `請輸入 ${customerObj.name} 的手機號碼:` : `Enter phone number for ${customerObj.name}:`,
+                              customerObj.phone || '0912-345-678'
+                            );
+                            if (newPhone !== null) {
+                              const updated = { ...customerObj, phone: newPhone.trim() };
+                              onUpdateCustomer(updated);
+                            }
+                          }}
+                          className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[10px] font-bold text-amber-900 shadow-2xs hover:bg-amber-100 dark:bg-gray-800 dark:text-amber-200 dark:border-amber-700 cursor-pointer shrink-0"
+                          title="修改顧客電話"
+                        >
+                          {customerObj.phone ? (lang === 'zh-TW' ? '修改電話' : 'Edit') : (lang === 'zh-TW' ? '+ 補電話' : '+ Add')}
+                        </button>
+                      )}
+                    </div>
+
+                    {customerObj?.notes && (
+                      <div className="mt-2 text-[11px] font-medium text-amber-900/90 dark:text-amber-200/90 bg-amber-100/60 dark:bg-amber-900/30 p-2 rounded-lg border border-amber-200/50">
+                        📌 {customerObj.notes}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/60 p-3 text-center dark:border-gray-800 dark:bg-gray-900/30">
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                      {lang === 'zh-TW' ? '此桌目前登記為散客 (未綁定會員卡)' : 'Walk-in guest (No member linked)'}
+                    </p>
+                    {customers.length > 0 && (
+                      <div className="mt-2 flex items-center justify-center space-x-2">
+                        <select
+                          onChange={e => {
+                            if (!e.target.value) return;
+                            const cust = customers.find(c => c.id === e.target.value);
+                            if (cust) {
+                              const updated = { ...selectedTable, customerName: cust.name };
+                              onUpdateTable(updated);
+                              setSelectedTable(updated);
+                            }
+                          }}
+                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-700 shadow-2xs dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                          defaultValue=""
+                        >
+                          <option value="" disabled>
+                            {lang === 'zh-TW' ? '+ 綁定顧客會員卡' : '+ Link Member Card'}
+                          </option>
+                          {customers.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} {c.phone ? `(${c.phone})` : ''} [{c.tier || 'Bronze'}]
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Active Order Card */}
+                {activeOrder && (
+                  <div className="rounded-xl border border-orange-200 bg-orange-50/60 p-3 dark:border-orange-900/40 dark:bg-orange-950/20 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Receipt className="h-4 w-4 text-[#FF8A00]" />
+                        <span className="text-xs font-black text-gray-900 dark:text-white">
+                          訂單 #{activeOrder.orderNumber || activeOrder.id.slice(-6)}
+                        </span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-200 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+                          {activeOrder.items?.length || 0} 品項
+                        </span>
+                      </div>
+                      <span className="text-sm font-black text-[#FF8A00]">
+                        ${(activeOrder.totalAmount || 0).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Status Updater */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">
+                    Change Status
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['Available', 'Occupied', 'Reserved', 'Cleaning'] as TableStatus[]).map(st => (
+                      <button
+                        key={st}
+                        onClick={() => handleStatusChange(st)}
+                        className={`rounded-xl border py-1.5 text-xs font-bold transition-all ${
+                          selectedTable.status === st
+                            ? 'border-[#FF8A00] bg-orange-50 text-[#FF8A00] dark:bg-orange-950/40'
+                            : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        {st}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Table Action Buttons */}
+                <div className="space-y-2 pt-2">
+                  <button
+                    onClick={() => onOpenTableOrder(selectedTable)}
+                    className="w-full flex items-center justify-center space-x-2 rounded-xl bg-[#FF8A00] py-2.5 text-xs font-bold text-white shadow-md hover:bg-[#e07900] cursor-pointer"
+                  >
+                    <Users className="h-4 w-4" />
+                    <span>
+                      {selectedTable.status === 'Occupied' || activeOrder ? 'View / Edit Order in POS' : 'Create Table Order'}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setQrModalTable(selectedTable)}
+                    className="w-full flex items-center justify-center space-x-2 rounded-xl border border-amber-300 bg-amber-50 py-2.5 text-xs font-bold text-amber-900 shadow-xs hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300 transition-all cursor-pointer"
+                  >
+                    <QrCode className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                    <span>Table Ordering QR Stand</span>
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setShowTransferModal(true)}
+                      className="flex items-center justify-center space-x-1 rounded-xl border border-gray-200 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 cursor-pointer"
+                    >
+                      <ArrowRightLeft className="h-3.5 w-3.5 text-[#FF8A00]" />
+                      <span>Transfer Table</span>
+                    </button>
+
+                    <button
+                      onClick={() => setShowMergeModal(true)}
+                      className="flex items-center justify-center space-x-1 rounded-xl border border-gray-200 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 cursor-pointer"
+                    >
+                      <Minimize2 className="h-3.5 w-3.5 text-purple-600" />
+                      <span>Merge Tables</span>
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (confirm(`Are you sure you want to delete Table ${selectedTable.name}?`)) {
+                        onDeleteTable(selectedTable.id);
+                        setSelectedTable(null);
+                      }
+                    }}
+                    className="w-full flex items-center justify-center space-x-1 rounded-xl border border-rose-200 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-400 cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Delete Table</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          ) : (
+            );
+          })() : (
             <div className="py-12 text-center text-gray-400">
               <Info className="mx-auto h-8 w-8 text-gray-300 mb-2" />
-              <p className="text-xs font-semibold">Select any table on the floor layout to inspect details or manage orders</p>
+              <p className="text-xs font-semibold">Select any table on the floor layout to inspect details, customer cards, or manage orders</p>
             </div>
           )}
         </div>

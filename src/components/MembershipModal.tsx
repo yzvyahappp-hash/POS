@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Award, Ticket, Gift, CheckCircle2, UserCheck, Star, Sparkles, Copy, ChevronRight, LogOut, Phone, Mail, User } from 'lucide-react';
-import { Customer, CustomerCoupon, RestaurantSettings } from '../types';
+import { Customer, CustomerCoupon, CouponCode, RestaurantSettings } from '../types';
 import { gasService } from '../services/gasService';
 
 interface MembershipModalProps {
@@ -8,6 +8,7 @@ interface MembershipModalProps {
   onClose: () => void;
   customers: Customer[];
   coupons: CustomerCoupon[];
+  storeCoupons?: CouponCode[];
   onUpdateCustomer: (customer: Customer) => void;
   onAddCoupon: (coupon: CustomerCoupon) => void;
   onAddCustomer: (newCustomer: Customer) => void;
@@ -16,6 +17,7 @@ interface MembershipModalProps {
 
 interface RewardItem {
   id: string;
+  code?: string;
   title: string;
   pointsCost: number;
   discountType: 'fixed' | 'percentage';
@@ -77,6 +79,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
   onClose,
   customers,
   coupons,
+  storeCoupons,
   onUpdateCustomer,
   onAddCoupon,
   onAddCustomer,
@@ -92,6 +95,35 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  // Derive active store coupons from Admin Management section
+  const activeStoreCoupons = storeCoupons ? storeCoupons.filter(c => c.isActive) : [];
+
+  const displayRewardCatalog: RewardItem[] =
+    activeStoreCoupons.length > 0
+      ? activeStoreCoupons.map(cpn => {
+          let pointsCost = 100;
+          if (cpn.discountType === 'percentage') {
+            pointsCost = Math.max(50, cpn.discountValue * 10);
+          } else {
+            pointsCost = Math.max(50, cpn.discountValue * 15);
+          }
+          return {
+            id: cpn.id,
+            code: cpn.code,
+            title: cpn.title || `${cpn.code} Coupon`,
+            pointsCost,
+            discountType: cpn.discountType,
+            discountValue: cpn.discountValue,
+            description:
+              cpn.description ||
+              (cpn.discountType === 'fixed'
+                ? `$${cpn.discountValue} off storewide discount code ${cpn.code}`
+                : `${cpn.discountValue}% off storewide discount code ${cpn.code}`),
+            badge: cpn.code,
+          };
+        })
+      : REWARD_CATALOG;
 
   if (!isOpen) return null;
 
@@ -174,7 +206,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
     const newCoupon: CustomerCoupon = {
       id: 'cpn-' + Date.now(),
       customerId: activeCustomer.id,
-      code: `BISTRO-${reward.title.substring(0, 4).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      code: reward.code || `BISTRO-${reward.title.substring(0, 4).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
       title: reward.title,
       discountType: reward.discountType,
       discountValue: reward.discountValue,
@@ -446,7 +478,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
                     Use your points to get instant discount vouchers for your next visit!
                   </p>
                   <div className="grid sm:grid-cols-2 gap-3">
-                    {REWARD_CATALOG.map(rew => {
+                    {displayRewardCatalog.map(rew => {
                       const canAfford = activeCustomer.loyaltyPoints >= rew.pointsCost;
                       return (
                         <div
@@ -494,48 +526,112 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
 
               {/* TAB 2: MY COUPONS */}
               {activeTab === 'my_coupons' && (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {myCouponsList.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center text-slate-500">
                       <Ticket className="mx-auto h-8 w-8 text-slate-600 mb-2" />
-                      <p className="text-xs font-bold text-slate-400">No active coupons redeemed yet.</p>
+                      <p className="text-xs font-bold text-slate-400">No coupons redeemed yet.</p>
                       <p className="text-[11px] text-slate-500 mt-1">
                         Go to "Redeem Rewards" above to exchange your loyalty points for discount vouchers.
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {myCouponsList.map(c => (
-                        <div
-                          key={c.id}
-                          className="flex items-center justify-between rounded-2xl border border-amber-500/30 bg-slate-950 p-4 shadow-md"
-                        >
-                          <div>
-                            <div className="flex items-center space-x-2">
-                              <span className="rounded-lg bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
-                                ACTIVE VOUCHER
-                              </span>
-                              <span className="text-xs text-slate-400">
-                                Redeemed {new Date(c.redeemedAt).toLocaleDateString()}
-                              </span>
-                            </div>
-                            <h5 className="mt-1 text-sm font-black text-white">{c.title}</h5>
-                            <div className="mt-2 inline-flex items-center space-x-2 rounded-xl bg-slate-900 border border-slate-800 px-3 py-1">
-                              <span className="font-mono text-xs font-extrabold text-amber-400 tracking-wider">
-                                {c.code}
-                              </span>
-                            </div>
+                    <div className="space-y-4">
+                      {/* Active Coupons Section */}
+                      <div>
+                        <h4 className="text-xs font-black uppercase tracking-wider text-amber-400 mb-2 flex items-center">
+                          <Ticket className="mr-1.5 h-3.5 w-3.5" /> Active Unused Coupons (
+                          {myCouponsList.filter(c => !c.isUsed).length})
+                        </h4>
+                        {myCouponsList.filter(c => !c.isUsed).length === 0 ? (
+                          <div className="rounded-xl bg-slate-950 border border-slate-800 p-3 text-center text-xs text-slate-500 font-medium">
+                            No active unused coupons.
                           </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {myCouponsList
+                              .filter(c => !c.isUsed)
+                              .map(c => (
+                                <div
+                                  key={c.id}
+                                  className="flex items-center justify-between rounded-2xl border border-amber-500/30 bg-slate-950 p-3.5 shadow-md"
+                                >
+                                  <div>
+                                    <div className="flex items-center space-x-2">
+                                      <span className="rounded-lg bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                                        ACTIVE VOUCHER
+                                      </span>
+                                      <span className="text-xs text-slate-400">
+                                        Redeemed {new Date(c.redeemedAt).toLocaleDateString()}
+                                      </span>
+                                    </div>
+                                    <h5 className="mt-1 text-sm font-black text-white">{c.title}</h5>
+                                    <div className="mt-1.5 inline-flex items-center space-x-2 rounded-xl bg-slate-900 border border-slate-800 px-2.5 py-0.5">
+                                      <span className="font-mono text-xs font-extrabold text-amber-400 tracking-wider">
+                                        {c.code}
+                                      </span>
+                                    </div>
+                                  </div>
 
-                          <button
-                            onClick={() => copyToClipboard(c.code)}
-                            className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 hover:text-white transition-all flex items-center space-x-1 cursor-pointer"
-                          >
-                            <Copy className="h-3.5 w-3.5 text-amber-400" />
-                            <span>{copiedCode === c.code ? 'Copied!' : 'Copy Code'}</span>
-                          </button>
+                                  <button
+                                    onClick={() => copyToClipboard(c.code)}
+                                    className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 hover:text-white transition-all flex items-center space-x-1 cursor-pointer shrink-0"
+                                  >
+                                    <Copy className="h-3.5 w-3.5 text-amber-400" />
+                                    <span>{copiedCode === c.code ? 'Copied!' : 'Copy Code'}</span>
+                                  </button>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Used Coupons History Section */}
+                      {myCouponsList.filter(c => c.isUsed).length > 0 && (
+                        <div className="pt-2">
+                          <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center">
+                            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5 text-slate-500" /> Used Coupons History (
+                            {myCouponsList.filter(c => c.isUsed).length})
+                          </h4>
+                          <div className="space-y-2">
+                            {myCouponsList
+                              .filter(c => c.isUsed)
+                              .map(c => (
+                                <div
+                                  key={c.id}
+                                  className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/60 p-3.5 opacity-80"
+                                >
+                                  <div>
+                                    <div className="flex items-center space-x-2">
+                                      <span className="rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-400">
+                                        USED
+                                      </span>
+                                      {c.usedAt && (
+                                        <span className="text-xs text-slate-400">
+                                          Used on {new Date(c.usedAt).toLocaleDateString()}
+                                        </span>
+                                      )}
+                                      {c.usedOnOrderNumber && (
+                                        <span className="text-xs font-mono text-amber-400 font-bold">
+                                          ({c.usedOnOrderNumber})
+                                        </span>
+                                      )}
+                                    </div>
+                                    <h5 className="mt-1 text-xs font-bold text-slate-300">{c.title}</h5>
+                                    <span className="font-mono text-[10px] text-slate-500">{c.code}</span>
+                                  </div>
+
+                                  <div className="text-right shrink-0">
+                                    <span className="text-xs font-black text-rose-400">
+                                      -${(c.usedDiscountAmount || c.discountValue).toFixed(2)} Off
+                                    </span>
+                                    <p className="text-[10px] text-slate-500 font-medium">Money Discounted</p>
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
                         </div>
-                      ))}
+                      )}
                     </div>
                   )}
                 </div>

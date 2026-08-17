@@ -19,7 +19,7 @@ import {
   ArrowUpDown,
   RefreshCw,
 } from 'lucide-react';
-import { Order, RestaurantSettings, Table } from '../types';
+import { Order, RestaurantSettings, Table, Customer } from '../types';
 import {
   receiptService,
   translateOrderType,
@@ -32,6 +32,9 @@ interface ReceiptsViewProps {
   orders: Order[];
   tables: Table[];
   settings: RestaurantSettings;
+  customers?: Customer[];
+  onUpdateCustomer?: (customer: Customer) => void;
+  onUpdateOrder?: (order: Order) => void;
   onOpenReceiptModal: (order: Order) => void;
   onProceedToCheckout?: (order: Order) => void;
 }
@@ -40,6 +43,9 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
   orders,
   tables,
   settings,
+  customers = [],
+  onUpdateCustomer,
+  onUpdateOrder,
   onOpenReceiptModal,
   onProceedToCheckout,
 }) => {
@@ -632,33 +638,86 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
               {/* Customer & Table */}
-              <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800">
-                <div>
-                  <span className="text-gray-400 block text-[11px]">顧客姓名</span>
-                  <span className="font-bold text-gray-900 dark:text-white">
-                    {selectedOrderForDetail.customerName || '散客 / 現場顧客'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block text-[11px]">桌號與型態</span>
-                  <span className="font-bold text-gray-900 dark:text-white">
-                    {selectedOrderForDetail.tableName || '未指定'} (
-                    {translateOrderType(selectedOrderForDetail.type)})
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block text-[11px]">付款方式</span>
-                  <span className="font-bold text-blue-600 dark:text-blue-400">
-                    {translatePaymentMethod(selectedOrderForDetail.paymentMethod)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block text-[11px]">付款狀態</span>
-                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                    {translatePaymentStatus(selectedOrderForDetail.paymentStatus)}
-                  </span>
-                </div>
-              </div>
+              {(() => {
+                const ord = selectedOrderForDetail;
+                const isGenericName = !ord.customerName || ['guest', 'walk-in guest', '散客', '現場顧客', '內用賓客'].includes(ord.customerName.trim().toLowerCase());
+                
+                const matchedCust = customers?.find(c =>
+                  (ord.customerId && c.id === ord.customerId) ||
+                  (ord.customerPhone && c.phone && c.phone.replace(/\D/g, '').endsWith(ord.customerPhone.replace(/\D/g, ''))) ||
+                  (!isGenericName && ord.customerName && c.name.trim().toLowerCase() === ord.customerName.trim().toLowerCase())
+                );
+
+                const currentPoints = matchedCust ? matchedCust.loyaltyPoints : ord.customerPointsBalance;
+
+                return (
+                  <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800">
+                    <div>
+                      <span className="text-gray-400 block text-[11px]">顧客姓名</span>
+                      <div className="flex items-center space-x-1.5">
+                        <span className="font-bold text-gray-900 dark:text-white">
+                          {ord.customerName || '散客 / 現場顧客'}
+                        </span>
+                        {matchedCust?.tier && (
+                          <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-300">
+                            {matchedCust.tier}
+                          </span>
+                        )}
+                      </div>
+                      {ord.customerPhone && (
+                        <span className="text-[10px] font-mono text-gray-400 block">{ord.customerPhone}</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[11px]">桌號與型態</span>
+                      <span className="font-bold text-gray-900 dark:text-white">
+                        {ord.tableName || '未指定'} ({translateOrderType(ord.type)})
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[11px]">付款方式</span>
+                      <span className="font-bold text-blue-600 dark:text-blue-400">
+                        {translatePaymentMethod(ord.paymentMethod)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[11px]">付款狀態</span>
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                        {translatePaymentStatus(ord.paymentStatus)}
+                      </span>
+                    </div>
+
+                    {/* Member & Points Status */}
+                    <div className="col-span-2 pt-2.5 border-t border-gray-200/60 dark:border-gray-700/60 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center space-x-1 text-amber-600 dark:text-amber-400 font-bold">
+                          <span>⭐ 本次獲得點數:</span>
+                          <span className="bg-amber-100 dark:bg-amber-950/60 px-1.5 py-0.5 rounded text-amber-700 dark:text-amber-300">
+                            +{Math.max(1, Math.floor(ord.totalAmount || 0))} pts
+                          </span>
+                        </div>
+                        <div className="text-gray-600 dark:text-gray-300 text-xs">
+                          <span className="text-gray-400">會員帳戶餘額: </span>
+                          <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                            {currentPoints !== undefined ? `${currentPoints} pts` : '已入帳'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {matchedCust && (
+                        <div className="flex items-center justify-between text-[11px] bg-white dark:bg-gray-900/80 p-2 rounded-lg border border-gray-100 dark:border-gray-800">
+                          <span className="text-gray-500 dark:text-gray-400">
+                            累計消費總額: <strong className="text-[#FF8A00]">${matchedCust.totalSpent.toFixed(2)}</strong>
+                          </span>
+                          <span className="text-gray-500 dark:text-gray-400">
+                            來訪次數: <strong className="text-gray-900 dark:text-white">{matchedCust.visitCount} 次</strong>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Items List */}
               <div>
@@ -689,32 +748,123 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
               </div>
 
               {/* Amount Calculations */}
-              <div className="space-y-1.5 p-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800">
-                <div className="flex justify-between text-gray-600 dark:text-gray-400">
-                  <span>小計金額</span>
-                  <span>${(selectedOrderForDetail.subtotal || 0).toFixed(2)}</span>
-                </div>
-                {(selectedOrderForDetail.discountAmount || 0) > 0 && (
-                  <div className="flex justify-between text-rose-500 font-medium">
-                    <span>折扣優惠 ({selectedOrderForDetail.discountPercentage || 0}%)</span>
-                    <span>-${(selectedOrderForDetail.discountAmount || 0).toFixed(2)}</span>
+              {(() => {
+                const ord = selectedOrderForDetail;
+                const subtotal = ord.subtotal || ord.totalAmount || 0;
+                const promoDiscount =
+                  ord.promoDiscountAmount ||
+                  (ord.appliedPromos && ord.appliedPromos.length > 0
+                    ? ord.appliedPromos.reduce((s, p) => s + (p.discountAmount || 0), 0)
+                    : 0);
+
+                const pointsDiscount = ord.pointsDiscountAmount || 0;
+
+                const couponDiscount =
+                  ord.couponDiscountAmount ||
+                  (ord.couponCode && (ord.discountAmount || 0) > 0 && !promoDiscount && !pointsDiscount
+                    ? ord.discountAmount
+                    : 0);
+
+                const percentageDiscount =
+                  ord.percentageDiscountAmount ||
+                  ((ord.discountPercentage || 0) > 0
+                    ? (subtotal * ord.discountPercentage) / 100
+                    : 0);
+
+                const manualDiscount =
+                  (ord.discountAmount || 0) > 0 &&
+                  !(promoDiscount || pointsDiscount || couponDiscount || percentageDiscount)
+                    ? ord.discountAmount || 0
+                    : 0;
+
+                const computedSum = promoDiscount + pointsDiscount + couponDiscount + percentageDiscount + manualDiscount;
+                const totalCombinedDiscount = Math.max(ord.discountAmount || 0, computedSum);
+
+                return (
+                  <div className="space-y-2 p-3.5 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800">
+                    <div className="flex justify-between text-gray-700 dark:text-gray-300 font-semibold">
+                      <span>小計金額</span>
+                      <span>${subtotal.toFixed(2)}</span>
+                    </div>
+
+                    {/* 完整的折抵明細 */}
+                    <div className="pt-2 border-t border-gray-200/80 dark:border-gray-700/80">
+                      <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 mb-1.5 flex items-center justify-between">
+                        <span>完整的折抵明細</span>
+                        <span className="text-[10px] font-medium text-gray-400">
+                          {totalCombinedDiscount > 0 ? `已折抵 -$${totalCombinedDiscount.toFixed(2)}` : '折扣記錄'}
+                        </span>
+                      </div>
+
+                      {totalCombinedDiscount > 0 ? (
+                        <div className="space-y-1 pl-1">
+                          {ord.appliedPromos && ord.appliedPromos.length > 0 ? (
+                            ord.appliedPromos.map((p, idx) => (
+                              <div key={idx} className="flex justify-between text-emerald-600 dark:text-emerald-400 font-medium">
+                                <span>🎁 優惠: {p.title} ({p.reason})</span>
+                                <span>-${p.discountAmount.toFixed(2)}</span>
+                              </div>
+                            ))
+                          ) : promoDiscount > 0 ? (
+                            <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-medium">
+                              <span>🎁 自動組合/滿額特惠</span>
+                              <span>-${promoDiscount.toFixed(2)}</span>
+                            </div>
+                          ) : null}
+
+                          {pointsDiscount > 0 && (
+                            <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-medium">
+                              <span>🌟 會員點數折抵 ({ord.pointsRedeemed || 0} pts)</span>
+                              <span>-${pointsDiscount.toFixed(2)}</span>
+                            </div>
+                          )}
+
+                          {(couponDiscount > 0 || (ord.couponCode && ord.couponCode.trim() !== '')) && (
+                            <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-medium">
+                              <span>🏷️ 優惠券折抵 ({ord.couponCode || '折價券'})</span>
+                              <span>-${(couponDiscount || (ord.discountAmount && !promoDiscount && !pointsDiscount ? ord.discountAmount : 0)).toFixed(2)}</span>
+                            </div>
+                          )}
+
+                          {(percentageDiscount > 0 || manualDiscount > 0 || (ord.discountPercentage || 0) > 0) && (
+                            <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-medium">
+                              <span>✂️ 整單折扣 ({ord.discountPercentage || 0}%)</span>
+                              <span>-${(percentageDiscount || manualDiscount || ord.discountAmount || 0).toFixed(2)}</span>
+                            </div>
+                          )}
+
+                          <div className="flex justify-between text-rose-500 font-bold pt-1 pb-1 border-t border-b border-dashed border-gray-200 dark:border-gray-700">
+                            <span>合計總折扣金額</span>
+                            <span>-${totalCombinedDiscount.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-2 rounded-lg bg-gray-100/80 dark:bg-gray-800/80 text-gray-500 dark:text-gray-400 text-[11px] font-medium flex justify-between items-center">
+                          <span>折抵套用結果</span>
+                          <span className="text-gray-400 dark:text-gray-500 italic font-semibold">未使用任何折抵</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between text-gray-600 dark:text-gray-400 text-[11px] pt-1">
+                      <span>營業稅金 ({ord.taxRate || 0}%)</span>
+                      <span>${(ord.taxAmount || 0).toFixed(2)}</span>
+                    </div>
+
+                    <div className="flex justify-between text-gray-600 dark:text-gray-400 text-[11px]">
+                      <span>服務費 ({ord.serviceChargeRate || 0}%)</span>
+                      <span>${(ord.serviceChargeAmount || 0).toFixed(2)}</span>
+                    </div>
+
+                    <div className="flex justify-between font-black text-sm text-gray-900 dark:text-white pt-2 border-t border-gray-200 dark:border-gray-700">
+                      <span>總計金額</span>
+                      <span className="text-[#FF8A00]">
+                        ${(ord.totalAmount || 0).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
-                )}
-                <div className="flex justify-between text-gray-600 dark:text-gray-400">
-                  <span>營業稅金 ({selectedOrderForDetail.taxRate || 0}%)</span>
-                  <span>${(selectedOrderForDetail.taxAmount || 0).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-gray-600 dark:text-gray-400">
-                  <span>服務費 ({selectedOrderForDetail.serviceChargeRate || 0}%)</span>
-                  <span>${(selectedOrderForDetail.serviceChargeAmount || 0).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-black text-sm text-gray-900 dark:text-white pt-2 border-t border-gray-200 dark:border-gray-700">
-                  <span>總計金額</span>
-                  <span className="text-[#FF8A00]">
-                    ${(selectedOrderForDetail.totalAmount || 0).toFixed(2)}
-                  </span>
-                </div>
-              </div>
+                );
+              })()}
             </div>
 
             {/* Footer Actions */}

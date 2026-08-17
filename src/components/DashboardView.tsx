@@ -23,6 +23,8 @@ import {
 } from 'recharts';
 import { Table, Order, Reservation, MenuItem, RestaurantSettings } from '../types';
 import { INITIAL_SETTINGS } from '../data/mockData';
+import { useTranslation } from '../i18n/useTranslation';
+import { translateCategory, translateOrderStatus } from '../utils/i18nHelpers';
 
 interface DashboardViewProps {
   tables?: Table[];
@@ -47,6 +49,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNewOrder,
   onOpenTableOrder,
 }) => {
+  const { lang, t } = useTranslation();
   const [currentTime, setCurrentTime] = useState<string>('');
 
   useEffect(() => {
@@ -107,7 +110,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="flex items-center gap-2 mb-2 flex-wrap">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FF8A00]/20 px-3 py-1 text-xs font-bold text-[#FF8A00] border border-[#FF8A00]/30">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              Live Restaurant Overview
+              {lang === 'zh-TW' ? '餐廳即時營運總覽' : lang === 'ja' ? '店舗リアルタイム概況' : 'Live Restaurant Overview'}
             </span>
             {currentTime && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-800/80 px-3 py-1 text-xs font-semibold text-amber-300 border border-gray-700/60">
@@ -117,34 +120,34 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight">
-            Welcome to {settings.restaurantName}
+            {lang === 'zh-TW' ? `歡迎使用 ${settings.restaurantName}` : lang === 'ja' ? `ようこそ ${settings.restaurantName}` : `Welcome to ${settings.restaurantName}`}
           </h1>
           <p className="mt-1 text-xs text-gray-300">
-            {occupiedTables.length} tables active now • {pendingOrders.length} orders in kitchen
+            {lang === 'zh-TW' ? `${occupiedTables.length} 桌入座中 • 廚房尚有 ${pendingOrders.length} 筆待處理訂單` : lang === 'ja' ? `${occupiedTables.length} テーブル使用中 • 厨房調理中 ${pendingOrders.length} 件` : `${occupiedTables.length} tables active now • ${pendingOrders.length} orders in kitchen`}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             onClick={onNewOrder}
-            className="flex items-center space-x-2 rounded-xl bg-[#FF8A00] px-4 py-2.5 text-xs font-bold text-white shadow-lg transition-all hover:bg-[#e07900] active:scale-95"
+            className="flex items-center space-x-2 rounded-xl bg-[#FF8A00] px-4 py-2.5 text-xs font-bold text-white shadow-lg transition-all hover:bg-[#e07900] active:scale-95 cursor-pointer"
           >
             <Plus className="h-4 w-4" />
-            <span>Create Order</span>
+            <span>{t('new_order')}</span>
           </button>
           <button
             onClick={() => onNavigateTab('reservations')}
-            className="flex items-center space-x-2 rounded-xl border border-gray-700 bg-gray-800/80 px-4 py-2.5 text-xs font-bold text-gray-200 hover:bg-gray-700 transition-all"
+            className="flex items-center space-x-2 rounded-xl border border-gray-700 bg-gray-800/80 px-4 py-2.5 text-xs font-bold text-gray-200 hover:bg-gray-700 transition-all cursor-pointer"
           >
             <Calendar className="h-4 w-4 text-amber-400" />
-            <span>Book Reservation</span>
+            <span>{t('nav_reservations')}</span>
           </button>
           <button
             onClick={() => onNavigateTab('floorplan')}
-            className="flex items-center space-x-2 rounded-xl border border-gray-700 bg-gray-800/80 px-4 py-2.5 text-xs font-bold text-gray-200 hover:bg-gray-700 transition-all"
+            className="flex items-center space-x-2 rounded-xl border border-gray-700 bg-gray-800/80 px-4 py-2.5 text-xs font-bold text-gray-200 hover:bg-gray-700 transition-all cursor-pointer"
           >
             <Grid className="h-4 w-4 text-emerald-400" />
-            <span>Floor Plan</span>
+            <span>{t('nav_floorplan')}</span>
           </button>
         </div>
       </div>
@@ -154,53 +157,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* Daily Revenue Card */}
         <div className="stat-card-sleek dark:bg-gray-900 dark:border-gray-800">
           <div className="text-[12px] font-semibold text-gray-500 uppercase tracking-wider dark:text-gray-400">
-            Daily Revenue
+            {t('daily_revenue')}
           </div>
           <div className="text-2xl font-bold text-gray-900 dark:text-white my-1">
             {settings?.currencySymbol || '$'}
             {dailyRevenue.toFixed(2)}
           </div>
           <div className="text-[11px] font-semibold text-[#10B981] flex items-center">
-            ↑ 12.4% from yesterday
+            ↑ 12.4% {lang === 'zh-TW' ? '較昨日提升' : lang === 'ja' ? '前日比' : 'from yesterday'}
           </div>
         </div>
 
         {/* Occupied Tables Card */}
         <div className="stat-card-sleek dark:bg-gray-900 dark:border-gray-800">
           <div className="text-[12px] font-semibold text-gray-500 uppercase tracking-wider dark:text-gray-400">
-            Occupied Tables
+            {t('occupied_tables')}
           </div>
           <div className="text-2xl font-bold text-gray-900 dark:text-white my-1">
             {occupiedTables.length} / {safeTables.length}
           </div>
           <div className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">
-            {occupancyRate}% current capacity
+            {occupancyRate}% {lang === 'zh-TW' ? '目前入座率' : lang === 'ja' ? '現在の稼働率' : 'current capacity'}
           </div>
         </div>
 
         {/* Pending Orders Card */}
         <div className="stat-card-sleek dark:bg-gray-900 dark:border-gray-800">
           <div className="text-[12px] font-semibold text-gray-500 uppercase tracking-wider dark:text-gray-400">
-            Pending Orders
+            {t('pending_orders')}
           </div>
           <div className="text-2xl font-bold text-gray-900 dark:text-white my-1">
             {pendingOrders.length}
           </div>
           <div className="text-[11px] font-semibold text-[#F59E0B]">
-            {pendingOrders.length > 0 ? `${pendingOrders.length} priority tickets` : 'All clear'}
+            {pendingOrders.length > 0 ? (lang === 'zh-TW' ? `${pendingOrders.length} 筆廚房製作中` : lang === 'ja' ? `${pendingOrders.length} 件調理中` : `${pendingOrders.length} priority tickets`) : (lang === 'zh-TW' ? '出餐完畢' : lang === 'ja' ? '調理完了' : 'All clear')}
           </div>
         </div>
 
         {/* Reservations Today Card */}
         <div className="stat-card-sleek dark:bg-gray-900 dark:border-gray-800">
           <div className="text-[12px] font-semibold text-gray-500 uppercase tracking-wider dark:text-gray-400">
-            Reservations
+            {t('upcoming_bookings')}
           </div>
           <div className="text-2xl font-bold text-gray-900 dark:text-white my-1">
             {todayReservations.length}
           </div>
           <div className="text-[11px] font-semibold text-[#3B82F6]">
-            For the next 4 hours
+            {lang === 'zh-TW' ? '今日尚有訂位需求' : lang === 'ja' ? '本日ご来店予定' : 'For today'}
           </div>
         </div>
       </div>
@@ -212,12 +215,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="flex items-center justify-between border-b border-gray-100 pb-4 dark:border-gray-800">
             <div>
               <h3 className="font-extrabold text-gray-900 text-sm dark:text-white">
-                Hourly Revenue Flow
+                {lang === 'zh-TW' ? '時段營業額走勢圖' : lang === 'ja' ? '時間帯別売上推移' : 'Hourly Revenue Flow'}
               </h3>
-              <p className="text-xs text-gray-400">Real-time hourly sales progression</p>
+              <p className="text-xs text-gray-400">
+                {lang === 'zh-TW' ? '即時每小時營業趨勢分析' : lang === 'ja' ? 'リアルタイム時間帯別売上分析' : 'Real-time hourly sales progression'}
+              </p>
             </div>
             <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700 dark:bg-emerald-950/50">
-              Peak: 8:00 PM
+              {lang === 'zh-TW' ? '高峰時段：20:00' : lang === 'ja' ? 'ピーク: 20:00' : 'Peak: 8:00 PM'}
             </span>
           </div>
 
@@ -387,8 +392,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {safeMenuItems.slice(0, 4).map(item => (
               <div key={item.id} className="flex items-center space-x-3">
                 <img
-                  src={item.image}
+                  src={item.image || 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80'}
                   alt={item.name}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80';
+                  }}
                   className="h-12 w-12 rounded-xl object-cover border border-gray-100"
                 />
                 <div className="flex-1 overflow-hidden">

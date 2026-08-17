@@ -90,6 +90,11 @@ function doPost(e) {
     
     // 2. Save Order (Upserts Order & OrderItems)
     if (action === 'saveOrder') {
+      let appliedPromosStr = '[]';
+      try {
+        appliedPromosStr = Array.isArray(data.appliedPromos) ? JSON.stringify(data.appliedPromos) : (data.appliedPromos || '[]');
+      } catch(e) { appliedPromosStr = '[]'; }
+
       upsertRowToSheet('Orders', 0, data.id, [
         data.id,
         data.orderNumber || '',
@@ -102,7 +107,19 @@ function doPost(e) {
         data.paymentMethod || '',
         data.createdAt || new Date().toISOString(),
         data.createdBy || 'Staff',
-        data.updatedAt || data.createdAt || new Date().toISOString()
+        data.updatedAt || data.createdAt || new Date().toISOString(),
+        data.subtotal !== undefined ? Number(data.subtotal) : Number(data.totalAmount || 0),
+        Number(data.discountAmount || 0),
+        Number(data.discountPercentage || 0),
+        Number(data.pointsRedeemed || 0),
+        Number(data.pointsDiscountAmount || 0),
+        data.couponCode || '',
+        Number(data.couponDiscountAmount || 0),
+        Number(data.promoDiscountAmount || 0),
+        appliedPromosStr,
+        data.customerPhone || '',
+        data.customerId || '',
+        data.customerPointsBalance !== undefined ? Number(data.customerPointsBalance) : ''
       ]);
 
       if (Array.isArray(data.items)) {
@@ -176,7 +193,8 @@ function doPost(e) {
         data.visitCount || 0,
         data.totalSpent || 0,
         data.tier || 'Bronze',
-        data.lastVisit || new Date().toISOString()
+        data.lastVisit || new Date().toISOString(),
+        data.updatedAt || data.lastVisit || new Date().toISOString()
       ]);
       return createJsonResponse({ status: 'success', customerId: data.id });
     }
@@ -579,7 +597,7 @@ export function formatFullDataPayload(state: Record<string, any>): Record<string
   ];
 
   const orderRows = [
-    ['ID', 'OrderNumber', 'Type', 'Table', 'Customer', 'TotalAmount', 'Status', 'PaymentStatus', 'PaymentMethod', 'CreatedAt', 'CreatedBy', 'UpdatedAt'],
+    ['ID', 'OrderNumber', 'Type', 'Table', 'Customer', 'TotalAmount', 'Status', 'PaymentStatus', 'PaymentMethod', 'CreatedAt', 'CreatedBy', 'UpdatedAt', 'Subtotal', 'DiscountAmount', 'DiscountPercentage', 'PointsRedeemed', 'PointsDiscountAmount', 'CouponCode', 'CouponDiscountAmount', 'PromoDiscountAmount', 'AppliedPromos', 'CustomerPhone', 'CustomerId', 'CustomerPointsBalance'],
     ...orders.map(o => [
       String(o.id || ''),
       String(o.orderNumber || ''),
@@ -592,7 +610,19 @@ export function formatFullDataPayload(state: Record<string, any>): Record<string
       String(o.paymentMethod || ''),
       String(o.createdAt || ''),
       String(o.createdBy || ''),
-      String(o.updatedAt || o.createdAt || new Date().toISOString())
+      String(o.updatedAt || o.createdAt || new Date().toISOString()),
+      Number(o.subtotal || o.totalAmount || 0),
+      Number(o.discountAmount || 0),
+      Number(o.discountPercentage || 0),
+      Number(o.pointsRedeemed || 0),
+      Number(o.pointsDiscountAmount || 0),
+      String(o.couponCode || ''),
+      Number(o.couponDiscountAmount || 0),
+      Number(o.promoDiscountAmount || 0),
+      JSON.stringify(o.appliedPromos || []),
+      String(o.customerPhone || ''),
+      String(o.customerId || ''),
+      o.customerPointsBalance !== undefined ? Number(o.customerPointsBalance) : ''
     ])
   ];
 
@@ -647,7 +677,7 @@ export function formatFullDataPayload(state: Record<string, any>): Record<string
   ];
 
   const customerRows = [
-    ['ID', 'Name', 'Phone', 'Email', 'LoyaltyPoints', 'VisitCount', 'TotalSpent', 'Tier', 'LastVisit'],
+    ['ID', 'Name', 'Phone', 'Email', 'LoyaltyPoints', 'VisitCount', 'TotalSpent', 'Tier', 'LastVisit', 'UpdatedAt'],
     ...customers.map(c => [
       String(c.id || ''),
       String(c.name || ''),
@@ -657,7 +687,8 @@ export function formatFullDataPayload(state: Record<string, any>): Record<string
       Number(c.visitCount || 0),
       Number(c.totalSpent || 0),
       String(c.tier || 'Bronze'),
-      String(c.lastVisit || '')
+      String(c.lastVisit || ''),
+      String(c.updatedAt || c.lastVisit || new Date().toISOString())
     ])
   ];
 
@@ -770,6 +801,28 @@ export function formatReservationTime(val: any): string {
   return formatTimeUTC8(val);
 }
 
+function getColumnIndex(headers: any[], keywords: string[]): number {
+  if (!Array.isArray(headers)) return -1;
+  const lowerHeaders = headers.map(h => String(h || '').trim().toLowerCase());
+  for (const kw of keywords) {
+    const target = kw.toLowerCase();
+    const idx = lowerHeaders.findIndex(h => h === target || h.includes(target));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+function findEmailInRow(row: any[]): string {
+  if (!Array.isArray(row)) return '';
+  for (const cell of row) {
+    if (typeof cell === 'string' && cell.includes('@') && cell.includes('.')) {
+      const match = cell.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      if (match) return match[0].trim();
+    }
+  }
+  return '';
+}
+
 export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
   orders?: Order[];
   reservations?: Reservation[];
@@ -788,8 +841,8 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
   const result: any = {};
 
   // 1. Employees
-  if (Array.isArray(sheetsData.Employees) && sheetsData.Employees.length > 1) {
-    const rows = sheetsData.Employees.slice(1);
+  if (Array.isArray(sheetsData.Employees)) {
+    const rows = sheetsData.Employees.length > 1 ? sheetsData.Employees.slice(1) : [];
     result.employees = rows
       .filter(r => r && r[0])
       .map((r, i) => ({
@@ -806,8 +859,8 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
   }
 
   // 2. Menu
-  if (Array.isArray(sheetsData.Menu) && sheetsData.Menu.length > 1) {
-    const rows = sheetsData.Menu.slice(1);
+  if (Array.isArray(sheetsData.Menu)) {
+    const rows = sheetsData.Menu.length > 1 ? sheetsData.Menu.slice(1) : [];
     result.menuItems = rows
       .filter(r => r && r[0])
       .map(r => ({
@@ -824,8 +877,8 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
   }
 
   // 3. Tables
-  if (Array.isArray(sheetsData.Tables) && sheetsData.Tables.length > 1) {
-    const rows = sheetsData.Tables.slice(1);
+  if (Array.isArray(sheetsData.Tables)) {
+    const rows = sheetsData.Tables.length > 1 ? sheetsData.Tables.slice(1) : [];
     result.tables = rows
       .filter(r => r && r[0])
       .map((r, i) => {
@@ -871,12 +924,16 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
     });
   }
 
-  if (Array.isArray(sheetsData.Orders) && sheetsData.Orders.length > 1) {
-    const rows = sheetsData.Orders.slice(1);
+  if (Array.isArray(sheetsData.Orders)) {
+    const rows = sheetsData.Orders.length > 1 ? sheetsData.Orders.slice(1) : [];
     result.orders = rows
       .filter(r => r && r[0])
       .map(r => {
         const orderId = String(r[0]);
+        let appliedPromos = [];
+        try {
+          if (r[20]) appliedPromos = JSON.parse(String(r[20]));
+        } catch {}
         return {
           id: orderId,
           orderNumber: String(r[1] || ''),
@@ -890,34 +947,70 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
           createdAt: String(r[9] || new Date().toISOString()),
           createdBy: String(r[10] || 'Staff'),
           updatedAt: String(r[11] || r[9] || new Date().toISOString()),
+          subtotal: r[12] !== undefined && r[12] !== '' ? parseFloat(r[12]) : undefined,
+          discountAmount: r[13] !== undefined && r[13] !== '' ? parseFloat(r[13]) : 0,
+          discountPercentage: r[14] !== undefined && r[14] !== '' ? parseFloat(r[14]) : 0,
+          pointsRedeemed: r[15] !== undefined && r[15] !== '' ? parseInt(r[15]) : 0,
+          pointsDiscountAmount: r[16] !== undefined && r[16] !== '' ? parseFloat(r[16]) : 0,
+          couponCode: r[17] ? String(r[17]) : undefined,
+          couponDiscountAmount: r[18] !== undefined && r[18] !== '' ? parseFloat(r[18]) : 0,
+          promoDiscountAmount: r[19] !== undefined && r[19] !== '' ? parseFloat(r[19]) : 0,
+          appliedPromos: Array.isArray(appliedPromos) ? appliedPromos : [],
+          customerPhone: r[21] ? String(r[21]) : undefined,
+          customerId: r[22] ? String(r[22]) : undefined,
+          customerPointsBalance: r[23] !== undefined && r[23] !== '' ? parseInt(r[23]) : undefined,
           items: orderItemsMap[orderId] || [],
         };
       });
   }
 
   // 5. Reservations
-  if (Array.isArray(sheetsData.Reservations) && sheetsData.Reservations.length > 1) {
-    const rows = sheetsData.Reservations.slice(1);
+  if (Array.isArray(sheetsData.Reservations) && sheetsData.Reservations.length > 0) {
+    const headerRow = sheetsData.Reservations[0] || [];
+    const rows = sheetsData.Reservations.length > 1 ? sheetsData.Reservations.slice(1) : [];
+
+    const idIdx = getColumnIndex(headerRow, ['id', '編號']);
+    const nameIdx = getColumnIndex(headerRow, ['customername', 'customer', 'name', '姓名', '訂位姓名']);
+    const phoneIdx = getColumnIndex(headerRow, ['phone', 'tel', 'mobile', '電話', '手機']);
+    const emailIdx = getColumnIndex(headerRow, ['email', 'gmail', 'mail', '電子郵件', '信箱', '郵件']);
+    const dateIdx = getColumnIndex(headerRow, ['date', '日期', '訂位日期']);
+    const timeIdx = getColumnIndex(headerRow, ['time', '時間', '訂位時間']);
+    const partyIdx = getColumnIndex(headerRow, ['partysize', 'guests', 'seats', '人數', '訂位人數']);
+    const tableIdx = getColumnIndex(headerRow, ['table', 'tablename', 'tableid', '桌號', '座位']);
+    const statusIdx = getColumnIndex(headerRow, ['status', '狀態', '訂位狀態']);
+    const notesIdx = getColumnIndex(headerRow, ['notes', 'note', '備註']);
+
     result.reservations = rows
-      .filter(r => r && r[0])
-      .map(r => ({
-        id: String(r[0]),
-        customerName: String(r[1] || ''),
-        phone: String(r[2] || ''),
-        email: String(r[3] || ''),
-        date: formatReservationDate(r[4]),
-        time: formatReservationTime(r[5]),
-        partySize: parseInt(r[6]) || 1,
-        tableName: String(r[7] || ''),
-        tableId: String(r[7] || ''),
-        status: String(r[8] || 'Upcoming') as Reservation['status'],
-        notes: String(r[9] || ''),
-      }));
+      .filter(r => r && (r[0] || r[1] || r[2]))
+      .map((r, i) => {
+        let email = emailIdx !== -1 && r[emailIdx] ? String(r[emailIdx]) : String(r[3] || '');
+        if (!email || !email.includes('@')) {
+          const detected = findEmailInRow(r);
+          if (detected) email = detected;
+        }
+
+        const dateVal = dateIdx !== -1 && r[dateIdx] ? r[dateIdx] : r[4];
+        const timeVal = timeIdx !== -1 && r[timeIdx] ? r[timeIdx] : r[5];
+
+        return {
+          id: idIdx !== -1 && r[idIdx] ? String(r[idIdx]) : String(r[0] || `res-${i + 1}`),
+          customerName: nameIdx !== -1 && r[nameIdx] ? String(r[nameIdx]) : String(r[1] || ''),
+          phone: phoneIdx !== -1 && r[phoneIdx] ? String(r[phoneIdx]) : String(r[2] || ''),
+          email: email.trim(),
+          date: formatReservationDate(dateVal),
+          time: formatReservationTime(timeVal),
+          partySize: partyIdx !== -1 && r[partyIdx] !== undefined ? parseInt(r[partyIdx]) || 1 : parseInt(r[6]) || 1,
+          tableName: tableIdx !== -1 && r[tableIdx] ? String(r[tableIdx]) : String(r[7] || ''),
+          tableId: tableIdx !== -1 && r[tableIdx] ? String(r[tableIdx]) : String(r[7] || ''),
+          status: (statusIdx !== -1 && r[statusIdx] ? String(r[statusIdx]) : String(r[8] || 'Upcoming')) as Reservation['status'],
+          notes: notesIdx !== -1 && r[notesIdx] ? String(r[notesIdx]) : String(r[9] || ''),
+        };
+      });
   }
 
   // 5.5 Waitlist
-  if (Array.isArray(sheetsData.Waitlist) && sheetsData.Waitlist.length > 1) {
-    const rows = sheetsData.Waitlist.slice(1);
+  if (Array.isArray(sheetsData.Waitlist)) {
+    const rows = sheetsData.Waitlist.length > 1 ? sheetsData.Waitlist.slice(1) : [];
     result.waitlist = rows
       .filter(r => r && r[0])
       .map(r => ({
@@ -934,26 +1027,56 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
   }
 
   // 6. Customers
-  if (Array.isArray(sheetsData.Customers) && sheetsData.Customers.length > 1) {
-    const rows = sheetsData.Customers.slice(1);
+  if (Array.isArray(sheetsData.Customers) && sheetsData.Customers.length > 0) {
+    const headerRow = sheetsData.Customers[0] || [];
+    const rows = sheetsData.Customers.length > 1 ? sheetsData.Customers.slice(1) : [];
+
+    const idIdx = getColumnIndex(headerRow, ['id', '編號', '顧客編號', '會員編號']);
+    const nameIdx = getColumnIndex(headerRow, ['name', 'customer', 'customername', '姓名', '顧客姓名', '會員姓名']);
+    const phoneIdx = getColumnIndex(headerRow, ['phone', 'tel', 'mobile', '電話', '手機']);
+    const emailIdx = getColumnIndex(headerRow, ['email', 'gmail', 'mail', '電子郵件', '信箱', '郵件']);
+    const pointsIdx = getColumnIndex(headerRow, ['loyaltypoints', 'points', 'point', '點數', '會員點數', '積分']);
+    const visitIdx = getColumnIndex(headerRow, ['visitcount', 'visits', '次數', '來訪次數']);
+    const spentIdx = getColumnIndex(headerRow, ['totalspent', 'spent', '消費總額', '累計消費']);
+    const tierIdx = getColumnIndex(headerRow, ['tier', 'level', '等級', '會員等級']);
+    const lastVisitIdx = getColumnIndex(headerRow, ['lastvisit', '最後訪問', '最後來訪']);
+    const updatedAtIdx = getColumnIndex(headerRow, ['updatedat', '更新時間']);
+
     result.customers = rows
-      .filter(r => r && r[0])
-      .map(r => ({
-        id: String(r[0]),
-        name: String(r[1] || ''),
-        phone: String(r[2] || ''),
-        email: String(r[3] || ''),
-        loyaltyPoints: parseInt(r[4]) || 0,
-        visitCount: parseInt(r[5]) || 0,
-        totalSpent: parseFloat(r[6]) || 0,
-        tier: String(r[7] || 'Bronze') as Customer['tier'],
-        lastVisit: String(r[8] || ''),
-      }));
+      .filter(r => r && (r[0] || r[1] || r[2] || r[3]))
+      .map((r, i) => {
+        let email = emailIdx !== -1 && r[emailIdx] ? String(r[emailIdx]) : String(r[3] || '');
+        // If not in specified column or doesn't have @, scan the whole row
+        if (!email || !email.includes('@')) {
+          const detected = findEmailInRow(r);
+          if (detected) email = detected;
+        }
+
+        const points = pointsIdx !== -1 && r[pointsIdx] !== undefined ? parseInt(r[pointsIdx]) || 0 : parseInt(r[4]) || 0;
+        const visits = visitIdx !== -1 && r[visitIdx] !== undefined ? parseInt(r[visitIdx]) || 0 : parseInt(r[5]) || 0;
+        const spent = spentIdx !== -1 && r[spentIdx] !== undefined ? parseFloat(r[spentIdx]) || 0 : parseFloat(r[6]) || 0;
+        const tier = (tierIdx !== -1 && r[tierIdx] ? String(r[tierIdx]) : String(r[7] || 'Bronze')) as Customer['tier'];
+        const lastVisit = lastVisitIdx !== -1 && r[lastVisitIdx] ? String(r[lastVisitIdx]) : String(r[8] || '');
+        const updatedAt = updatedAtIdx !== -1 && r[updatedAtIdx] ? String(r[updatedAtIdx]) : String(r[9] || lastVisit || new Date().toISOString());
+
+        return {
+          id: idIdx !== -1 && r[idIdx] ? String(r[idIdx]) : String(r[0] || `cust-${i + 1}`),
+          name: nameIdx !== -1 && r[nameIdx] ? String(r[nameIdx]) : String(r[1] || ''),
+          phone: phoneIdx !== -1 && r[phoneIdx] ? String(r[phoneIdx]) : String(r[2] || ''),
+          email: email.trim(),
+          loyaltyPoints: points,
+          visitCount: visits,
+          totalSpent: spent,
+          tier: tier || 'Bronze',
+          lastVisit,
+          updatedAt,
+        };
+      });
   }
 
   // 7. Coupons
-  if (Array.isArray(sheetsData.Coupons) && sheetsData.Coupons.length > 1) {
-    const rows = sheetsData.Coupons.slice(1);
+  if (Array.isArray(sheetsData.Coupons)) {
+    const rows = sheetsData.Coupons.length > 1 ? sheetsData.Coupons.slice(1) : [];
     result.coupons = rows
       .filter(r => r && r[0])
       .map(r => ({
@@ -970,8 +1093,8 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
   }
 
   // 8. Inventory
-  if (Array.isArray(sheetsData.Inventory) && sheetsData.Inventory.length > 1) {
-    const rows = sheetsData.Inventory.slice(1);
+  if (Array.isArray(sheetsData.Inventory)) {
+    const rows = sheetsData.Inventory.length > 1 ? sheetsData.Inventory.slice(1) : [];
     result.inventory = rows
       .filter(r => r && r[0])
       .map(r => ({
@@ -979,16 +1102,16 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
         name: String(r[1] || ''),
         category: String(r[2] || ''),
         unit: String(r[3] || ''),
-        stockQuantity: parseInt(r[4]) || 0,
-        minStockAlert: parseInt(r[5]) || 0,
+        stockQuantity: parseFloat(r[4]) || 0,
+        minStockAlert: parseFloat(r[5]) || 0,
         costPerUnit: parseFloat(r[6]) || 0,
         supplierName: String(r[7] || ''),
       }));
   }
 
   // 9. ActivityLogs
-  if (Array.isArray(sheetsData.ActivityLogs) && sheetsData.ActivityLogs.length > 1) {
-    const rows = sheetsData.ActivityLogs.slice(1);
+  if (Array.isArray(sheetsData.ActivityLogs)) {
+    const rows = sheetsData.ActivityLogs.length > 1 ? sheetsData.ActivityLogs.slice(1) : [];
     const seenIds = new Set<string>();
     result.activityLogs = rows
       .filter(r => r && r[0])

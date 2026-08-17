@@ -12,8 +12,12 @@ import {
   Layers,
   DollarSign,
   Image as ImageIcon,
+  Sliders,
 } from 'lucide-react';
 import { MenuItem, MenuItemAddOn } from '../types';
+import { useTranslation } from '../i18n/useTranslation';
+import { translateCategory } from '../utils/i18nHelpers';
+import { AdminCustomizationHub } from './AdminCustomizationHub';
 
 interface MenuViewProps {
   menuItems: MenuItem[];
@@ -28,6 +32,8 @@ export const MenuView: React.FC<MenuViewProps> = ({
   onUpdateMenuItem,
   onDeleteMenuItem,
 }) => {
+  const { lang, t } = useTranslation();
+  const [viewMode, setViewMode] = useState<'items' | 'customizations'>('items');
   const [activeCategory, setActiveCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showItemModal, setShowItemModal] = useState<boolean>(false);
@@ -124,53 +130,88 @@ export const MenuView: React.FC<MenuViewProps> = ({
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <h1 className="text-xl font-black text-gray-900 dark:text-white flex items-center">
-            <UtensilsCrossed className="mr-2 h-6 w-6 text-[#FF8A00]" /> Menu & Recipe Catalog
+            <UtensilsCrossed className="mr-2 h-6 w-6 text-[#FF8A00]" /> {t('nav_menu')}
           </h1>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Manage food dishes, prices, modifiers, and daily item availability
+            {lang === 'zh-TW' ? '管理餐點菜單、價格、客製化選項與每日供應狀態' : lang === 'ja' ? 'メニュー・価格・カスタムオプション・提供状況の管理' : 'Manage food dishes, prices, modifiers, and daily item availability'}
           </p>
         </div>
 
-        <button
-          onClick={handleOpenAddModal}
-          className="flex items-center space-x-2 rounded-xl bg-[#FF8A00] px-4 py-2.5 text-xs font-bold text-white shadow-md hover:bg-[#e07900] transition-all"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add New Dish</span>
-        </button>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-gray-200 pb-4 dark:border-gray-800">
-        {/* Category Selector Pills */}
-        <div className="flex flex-wrap items-center gap-2">
-          {categories.map(cat => (
+        <div className="flex items-center space-x-2">
+          {/* View Mode Switcher */}
+          <div className="flex rounded-2xl bg-gray-100 p-1 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
             <button
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
-              className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all ${
-                activeCategory === cat
-                  ? 'bg-[#FF8A00] text-white shadow-xs'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300'
+              onClick={() => setViewMode('items')}
+              className={`flex items-center space-x-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'items'
+                  ? 'bg-white text-gray-900 shadow-xs dark:bg-gray-700 dark:text-white'
+                  : 'text-gray-500 hover:text-gray-900 dark:text-gray-400'
               }`}
             >
-              {cat}
+              <UtensilsCrossed className="h-3.5 w-3.5" />
+              <span>{lang === 'zh-TW' ? '餐點清單' : 'Dishes List'} ({menuItems.length})</span>
             </button>
-          ))}
-        </div>
+            <button
+              onClick={() => setViewMode('customizations')}
+              className={`flex items-center space-x-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                viewMode === 'customizations'
+                  ? 'bg-[#FF8A00] text-white shadow-xs'
+                  : 'text-gray-500 hover:text-gray-900 dark:text-gray-400'
+              }`}
+            >
+              <Sliders className="h-3.5 w-3.5" />
+              <span>{lang === 'zh-TW' ? '客製化與加料管理' : 'Customization Hub'}</span>
+            </button>
+          </div>
 
-        {/* Search */}
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search menu items..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-xs font-medium focus:border-[#FF8A00] focus:bg-white focus:outline-hidden dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-          />
+          {viewMode === 'items' && (
+            <button
+              onClick={handleOpenAddModal}
+              className="flex items-center space-x-2 rounded-xl bg-[#FF8A00] px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-[#e07900] transition-all cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              <span>{lang === 'zh-TW' ? '+ 新增菜色' : lang === 'ja' ? '+ メニュー追加' : 'Add Dish'}</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Conditionally Render Customization Hub or Dish Cards */}
+      {viewMode === 'customizations' ? (
+        <AdminCustomizationHub />
+      ) : (
+        <>
+          {/* Filter and Search Bar */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-gray-200 pb-4 dark:border-gray-800">
+            {/* Category Selector Pills */}
+            <div className="flex flex-wrap items-center gap-2">
+              {categories.map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setActiveCategory(cat)}
+                  className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                    activeCategory === cat
+                      ? 'bg-[#FF8A00] text-white shadow-xs'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300'
+                  }`}
+                >
+                  {cat === 'All' ? (lang === 'zh-TW' ? '全部菜色' : lang === 'ja' ? 'すべて' : 'All') : translateCategory(cat, lang)}
+                </button>
+              ))}
+            </div>
+
+            {/* Search */}
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder={lang === 'zh-TW' ? '搜尋菜單餐點名稱...' : lang === 'ja' ? 'メニュー名を検索...' : 'Search menu items...'}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-xs font-medium focus:border-[#FF8A00] focus:bg-white focus:outline-hidden dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              />
+            </div>
+          </div>
 
       {/* Grid of Menu Items */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -184,8 +225,12 @@ export const MenuView: React.FC<MenuViewProps> = ({
             {/* Image Banner */}
             <div className="relative h-44 w-full overflow-hidden bg-gray-100">
               <img
-                src={item.image}
+                src={item.image || 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80'}
                 alt={item.name}
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80';
+                }}
                 className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
               />
 
@@ -288,6 +333,8 @@ export const MenuView: React.FC<MenuViewProps> = ({
           </div>
         ))}
       </div>
+        </>
+      )}
 
       {/* EDIT / ADD MENU ITEM MODAL */}
       {showItemModal && (

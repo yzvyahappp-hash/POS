@@ -18,6 +18,7 @@ import {
   LogOut,
   ChevronRight,
   Globe,
+  Tag,
 } from 'lucide-react';
 import { RestaurantSettings, Role, User, ActiveTab } from '../types';
 import { useTranslation } from '../i18n/useTranslation';
@@ -51,7 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentUser,
   onLogout,
 }) => {
-  const { t } = useTranslation();
+  const { lang, t } = useTranslation();
 
   const activeRole: Role = userRole || currentUser?.role || 'Admin';
   const rolePermissionsMap = settings?.rolePermissions || DEFAULT_ROLE_PERMISSIONS;
@@ -71,7 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const allNavItems = [
-    { id: 'landing', label: 'Public Restaurant Web', icon: Globe },
+    { id: 'landing', label: lang === 'zh-TW' ? '餐廳線上門市網站' : lang === 'ja' ? '店舗公開ウェブサイト' : 'Public Restaurant Web', icon: Globe },
     { id: 'dashboard', label: t('nav_dashboard'), icon: LayoutDashboard },
     { id: 'floorplan', label: t('nav_floorplan'), icon: Grid },
     { id: 'menu', label: t('nav_menu'), icon: UtensilsCrossed },
@@ -81,9 +82,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'checkout', label: t('nav_checkout'), icon: CreditCard },
     { id: 'reservations', label: t('nav_reservations'), icon: Calendar },
     { id: 'customers', label: t('nav_customers'), icon: Users },
+    { id: 'promos', label: lang === 'zh-TW' ? '促銷優惠與折價券' : lang === 'ja' ? 'プロモ＆クーポン' : 'Promos & Coupons', icon: Tag },
     { id: 'inventory', label: t('nav_inventory'), icon: Package, badge: lowStockCount > 0 ? lowStockCount : undefined, badgeColor: 'bg-rose-500' },
     { id: 'staff', label: t('nav_staff'), icon: UserCheck },
-    { id: 'logs', label: 'Clock In & Logs', icon: Clock },
+    { id: 'logs', label: lang === 'zh-TW' ? '打卡記錄與系統日誌' : lang === 'ja' ? '勤怠・システムログ' : 'Clock In & Logs', icon: Clock },
     { id: 'analytics', label: t('nav_analytics'), icon: BarChart3 },
     { id: 'settings', label: t('nav_settings'), icon: Settings },
     { id: 'gas', label: t('nav_gas'), icon: Database },
@@ -148,16 +150,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="border-t border-gray-100 p-3 dark:border-gray-800">
         <div className="flex items-center justify-between rounded-xl bg-gray-50 p-2.5 dark:bg-gray-800">
           <div>
-            <span className="block text-[10px] font-bold text-gray-400 uppercase">Active Role</span>
+            <span className="block text-[10px] font-bold text-gray-400 uppercase">
+              {lang === 'zh-TW' ? '當前身分權限' : lang === 'ja' ? '権限ロール' : 'Active Role'}
+            </span>
             <span className="text-xs font-bold text-[#FF8A00]">{userRole || 'Guest'}</span>
           </div>
           <button
             onClick={onLogout}
-            className="flex items-center space-x-1 rounded-lg bg-white px-2.5 py-1.5 text-xs font-medium text-rose-600 border border-gray-200 shadow-2xs hover:bg-rose-50 dark:bg-gray-700 dark:border-gray-600 dark:text-rose-400"
-            title="Sign Out"
+            className="flex items-center space-x-1 rounded-lg bg-white px-2.5 py-1.5 text-xs font-medium text-rose-600 border border-gray-200 shadow-2xs hover:bg-rose-50 dark:bg-gray-700 dark:border-gray-600 dark:text-rose-400 cursor-pointer"
+            title={lang === 'zh-TW' ? '登出系統' : lang === 'ja' ? 'ログアウト' : 'Sign Out'}
           >
             <LogOut className="h-3.5 w-3.5" />
-            <span>Logout</span>
+            <span>{lang === 'zh-TW' ? '登出' : lang === 'ja' ? 'ログアウト' : 'Logout'}</span>
           </button>
         </div>
       </div>

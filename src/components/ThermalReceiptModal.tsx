@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Printer, Copy, Check, X, Receipt as ReceiptIcon, ExternalLink, Type } from 'lucide-react';
+import { Printer, Copy, Check, X, Receipt as ReceiptIcon, ExternalLink } from 'lucide-react';
 import { Order, RestaurantSettings } from '../types';
 import {
   receiptService,
-  RECEIPT_FONTS,
+  HANDWRITING_FONT,
   translateText,
   translateOrderType,
   translatePaymentMethod,
@@ -24,9 +24,6 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   onClose,
 }) => {
   const [copied, setCopied] = useState(false);
-  const [selectedFontId, setSelectedFontId] = useState<string>('handwriting');
-
-  const currentFontObj = RECEIPT_FONTS.find(f => f.id === selectedFontId) || RECEIPT_FONTS[0];
 
   const currentSettings: RestaurantSettings = settings || {
     restaurantName: 'Grand Bistro & Grill 格蘭小酒館＆炭烤餐廳',
@@ -45,11 +42,11 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   React.useEffect(() => {
     if (isOpen && order) {
       const timer = setTimeout(() => {
-        receiptService.executeIframePrint(order, currentSettings, currentFontObj.family);
+        receiptService.executeIframePrint(order, currentSettings, HANDWRITING_FONT);
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, order?.id, (order as any)?._printTs, selectedFontId]);
+  }, [isOpen, order?.id, (order as any)?._printTs]);
 
   if (!isOpen || !order) return null;
 
@@ -62,6 +59,37 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   const formattedServer = order.createdBy || '門市服務員';
   const formattedPayMethod = translatePaymentMethod(order.paymentMethod);
   const formattedPayStatus = translatePaymentStatus(order.paymentStatus);
+
+  // Detailed discount breakdown and combined total discount calculation
+  const subtotal = order.subtotal || order.totalAmount || 0;
+  const promoDiscount =
+    order.promoDiscountAmount ||
+    (order.appliedPromos && order.appliedPromos.length > 0
+      ? order.appliedPromos.reduce((s, p) => s + (p.discountAmount || 0), 0)
+      : 0);
+
+  const pointsDiscount = order.pointsDiscountAmount || 0;
+
+  const couponDiscount =
+    order.couponDiscountAmount ||
+    (order.couponCode && (order.discountAmount || 0) > 0 && !promoDiscount && !pointsDiscount
+      ? order.discountAmount
+      : 0);
+
+  const percentageDiscount =
+    order.percentageDiscountAmount ||
+    ((order.discountPercentage || 0) > 0
+      ? (subtotal * order.discountPercentage) / 100
+      : 0);
+
+  const manualDiscount =
+    (order.discountAmount || 0) > 0 &&
+    !(promoDiscount || pointsDiscount || couponDiscount || percentageDiscount)
+      ? order.discountAmount || 0
+      : 0;
+
+  const computedSum = promoDiscount + pointsDiscount + couponDiscount + percentageDiscount + manualDiscount;
+  const totalCombinedDiscount = Math.max(order.discountAmount || 0, computedSum);
 
   const handleCopyText = () => {
     let text = `${currentSettings.restaurantName.toUpperCase()}\n`;
@@ -84,9 +112,29 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
       }
     });
     text += `----------------------------------------\n`;
-    text += `小計金額:              $${(order.subtotal || 0).toFixed(2)}\n`;
-    if ((order.discountAmount || 0) > 0) {
-      text += `折扣優惠 (${order.discountPercentage || 0}%):     -$${(order.discountAmount || 0).toFixed(2)}\n`;
+    text += `小計金額:              $${subtotal.toFixed(2)}\n`;
+    if (order.appliedPromos && order.appliedPromos.length > 0) {
+      order.appliedPromos.forEach(p => {
+        text += `🎁 優惠 (${p.title}):       -$${(p.discountAmount || 0).toFixed(2)}\n`;
+      });
+    } else if (promoDiscount > 0) {
+      text += `🎁 組合/滿額特惠:      -$${promoDiscount.toFixed(2)}\n`;
+    }
+    if (pointsDiscount > 0) {
+      text += `🌟 會員點數折抵 (${order.pointsRedeemed || 0}pts): -$${pointsDiscount.toFixed(2)}\n`;
+    }
+    if (couponDiscount > 0 || (order.couponCode && order.couponCode.trim() !== '')) {
+      const cVal = couponDiscount || (order.discountAmount && !promoDiscount && !pointsDiscount ? order.discountAmount : 0);
+      text += `🏷️ 優惠券折抵 (${order.couponCode || '折價券'}): -$${cVal.toFixed(2)}\n`;
+    }
+    if (percentageDiscount > 0 || manualDiscount > 0 || (order.discountPercentage || 0) > 0 || (order.discountAmount && !promoDiscount && !pointsDiscount && !couponDiscount ? order.discountAmount > 0 : false)) {
+      const pVal = percentageDiscount || manualDiscount || order.discountAmount || 0;
+      const label = order.discountPercentage && order.discountPercentage > 0 ? `整單折扣 (${order.discountPercentage}%)` : '折扣優惠';
+      text += `✂️ ${label}:       -$${pVal.toFixed(2)}\n`;
+    }
+    if (totalCombinedDiscount > 0) {
+      text += `----------------------------------------\n`;
+      text += `合計總折扣金額:        -$${totalCombinedDiscount.toFixed(2)}\n`;
     }
     text += `營業稅金 (${order.taxRate || 0}%):             $${(order.taxAmount || 0).toFixed(2)}\n`;
     text += `服務費 (${order.serviceChargeRate || 0}%):         $${(order.serviceChargeAmount || 0).toFixed(2)}\n`;
@@ -103,11 +151,11 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   };
 
   const handleTriggerPrint = () => {
-    receiptService.executeIframePrint(order, currentSettings, currentFontObj.family);
+    receiptService.executeIframePrint(order, currentSettings, HANDWRITING_FONT);
   };
 
   const handleOpenNewWindow = () => {
-    receiptService.openReceiptNewWindow(order, currentSettings, currentFontObj.family);
+    receiptService.openReceiptNewWindow(order, currentSettings, HANDWRITING_FONT);
   };
 
   return (
@@ -130,31 +178,6 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
           </button>
         </div>
 
-        {/* Font Selection Toolbar */}
-        <div className="px-4 py-2.5 bg-amber-50/80 dark:bg-amber-950/40 border-b border-amber-200/60 dark:border-amber-800/40 flex items-center space-x-2 overflow-x-auto no-print">
-          <Type className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
-          <span className="text-xs font-bold text-amber-900 dark:text-amber-200 shrink-0">字體樣式：</span>
-          <div className="flex space-x-1.5 overflow-x-auto py-0.5 scrollbar-none">
-            {RECEIPT_FONTS.map(f => {
-              const active = f.id === selectedFontId;
-              return (
-                <button
-                  key={f.id}
-                  onClick={() => setSelectedFontId(f.id)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
-                    active
-                      ? 'bg-[#FF8A00] text-white shadow-sm font-bold'
-                      : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-amber-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700'
-                  }`}
-                  style={{ fontFamily: f.family }}
-                >
-                  {f.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
         {/* Scrollable Receipt Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 bg-gray-100 dark:bg-gray-950 flex flex-col items-center justify-start min-h-[420px] thermal-receipt-modal-body">
           {/* Printable 80mm Thermal Paper Card */}
@@ -162,7 +185,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
             id="printable-thermal-receipt"
             className="w-full max-w-[340px] h-fit shrink-0 rounded-xl bg-white p-6 shadow-md text-black text-xs leading-relaxed border border-gray-200 select-text flex flex-col"
             style={{
-              fontFamily: currentFontObj.family,
+              fontFamily: HANDWRITING_FONT,
               backgroundColor: '#ffffff',
               color: '#000000',
             }}
@@ -260,12 +283,54 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
             <div className="space-y-1 text-[11px]">
               <div className="flex justify-between">
                 <span>小計金額:</span>
-                <span>${(order.subtotal || 0).toFixed(2)}</span>
+                <span>${subtotal.toFixed(2)}</span>
               </div>
-              {(order.discountAmount || 0) > 0 && (
-                <div className="flex justify-between text-gray-700">
-                  <span>折扣優惠 ({order.discountPercentage || 0}%):</span>
-                  <span>-${(order.discountAmount || 0).toFixed(2)}</span>
+              {totalCombinedDiscount > 0 ? (
+                <>
+                  {order.appliedPromos && order.appliedPromos.length > 0 ? (
+                    order.appliedPromos.map((p, idx) => (
+                      <div key={idx} className="flex justify-between text-emerald-800">
+                        <span>🎁 優惠: {p.title} ({p.reason}):</span>
+                        <span>-${p.discountAmount.toFixed(2)}</span>
+                      </div>
+                    ))
+                  ) : promoDiscount > 0 ? (
+                    <div className="flex justify-between text-emerald-800">
+                      <span>🎁 自動組合/滿額特惠:</span>
+                      <span>-${promoDiscount.toFixed(2)}</span>
+                    </div>
+                  ) : null}
+
+                  {pointsDiscount > 0 && (
+                    <div className="flex justify-between text-emerald-800">
+                      <span>🌟 會員點數折抵 ({order.pointsRedeemed || 0} pts):</span>
+                      <span>-${pointsDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
+
+                  {(couponDiscount > 0 || (order.couponCode && order.couponCode.trim() !== '')) && (
+                    <div className="flex justify-between text-emerald-800">
+                      <span>🏷️ 優惠券折抵 ({order.couponCode || '折價券'}):</span>
+                      <span>-${(couponDiscount || (order.discountAmount && !promoDiscount && !pointsDiscount ? order.discountAmount : 0)).toFixed(2)}</span>
+                    </div>
+                  )}
+
+                  {(percentageDiscount > 0 || manualDiscount > 0 || (order.discountPercentage || 0) > 0) && (
+                    <div className="flex justify-between text-emerald-800">
+                      <span>✂️ 整單折扣 ({order.discountPercentage || 0}%):</span>
+                      <span>-${(percentageDiscount || manualDiscount || order.discountAmount || 0).toFixed(2)}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between font-extrabold text-rose-700 py-0.5 border-t border-b border-dashed border-gray-400 my-0.5">
+                    <span>合計總折扣金額:</span>
+                    <span>-${totalCombinedDiscount.toFixed(2)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex justify-between text-gray-500 italic py-0.5">
+                  <span>完整的折抵明細:</span>
+                  <span>未使用任何折抵</span>
                 </div>
               )}
               <div className="flex justify-between">

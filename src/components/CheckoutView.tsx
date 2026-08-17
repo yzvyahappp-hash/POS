@@ -14,20 +14,49 @@ import {
   X,
   Sparkles,
   User,
+  Users,
+  AlertCircle,
   Phone,
   Edit2,
   Check,
 } from 'lucide-react';
-import { Order, RestaurantSettings, Customer } from '../types';
+import { Order, RestaurantSettings, Customer, CustomerCoupon, PromoRule, CouponCode, AppliedPromo } from '../types';
 import { receiptService } from '../services/receiptService';
 import { audioService } from '../services/audioService';
+import { evaluateOrderPromos } from '../utils/promoEngine';
 
 interface CheckoutViewProps {
   orders: Order[];
   customers: Customer[];
+  coupons: CustomerCoupon[];
+  storeCoupons?: CouponCode[];
+  promoRules?: PromoRule[];
   settings: RestaurantSettings;
   activeOrderToCheckout: Order | null;
-  onCompletePayment: (orderId: string, paymentDetails: { method: Order['paymentMethod']; cashReceived?: number; changeGiven?: number }) => void;
+  onCompletePayment: (
+    orderId: string,
+    paymentDetails: {
+      method: Order['paymentMethod'];
+      cashReceived?: number;
+      changeGiven?: number;
+      pointsRedeemed?: number;
+      pointsDiscountAmount?: number;
+      couponCode?: string;
+      couponDiscountAmount?: number;
+      percentageDiscountAmount?: number;
+      promoDiscountAmount?: number;
+      appliedPromos?: AppliedPromo[];
+      discountPercentage?: number;
+      usedCouponIds?: string[];
+      totalDiscount?: number;
+      subtotal?: number;
+      customerName?: string;
+      customerPhone?: string;
+      customerId?: string;
+      finalTotalAmount?: number;
+      customerPointsBalance?: number;
+    }
+  ) => void;
   onUpdateOrderDetails?: (updatedOrder: Order) => void;
   onMergeOrders?: (orderIdsToMerge: string[]) => void;
 }
@@ -35,6 +64,9 @@ interface CheckoutViewProps {
 export const CheckoutView: React.FC<CheckoutViewProps> = ({
   orders,
   customers,
+  coupons,
+  storeCoupons,
+  promoRules,
   settings,
   activeOrderToCheckout,
   onCompletePayment,
@@ -46,13 +78,17 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     activeOrderToCheckout || (unpaidOrders.length > 0 ? unpaidOrders[0] : null)
   );
 
-  const [paymentMethod, setPaymentMethod] = useState<Order['paymentMethod']>('Cash');
+  const [paymentMethod, setPaymentMethod] = useState<Order['paymentMethod'] | 'Split'>('Cash');
   const [cashReceived, setCashReceived] = useState<number>(selectedOrder ? selectedOrder.totalAmount : 0);
   const [couponCode, setCouponCode] = useState<string>('');
   const [redeemPoints, setRedeemPoints] = useState<number>(0);
+  const [selectedCouponIds, setSelectedCouponIds] = useState<string[]>([]);
+  const [splitCount, setSplitCount] = useState<number>(2);
+  const [paidSplitsCount, setPaidSplitsCount] = useState<number>(0);
   const [emailReceiptAddress, setEmailReceiptAddress] = useState<string>('');
   const [showReceiptModal, setShowReceiptModal] = useState<boolean>(false);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string>('');
 
   useEffect(() => {
     if (activeOrderToCheckout) {
@@ -60,6 +96,8 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
       setCashReceived(activeOrderToCheckout.totalAmount);
       setKeypadString(activeOrderToCheckout.totalAmount.toString());
       setIsSuccess(false);
+      setErrorMsg('');
+      setPaidSplitsCount(0);
     }
   }, [activeOrderToCheckout]);
 
@@ -80,6 +118,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
       setSelectedCustomerId('');
     }
     setIsEditingCustomer(false);
+    setErrorMsg('');
   }, [selectedOrder?.id]);
 
   const [cashInputMode, setCashInputMode] = useState<'typed' | 'keypad'>(
@@ -87,13 +126,129 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   );
   const [keypadString, setKeypadString] = useState<string>('');
 
-  const changeGiven = selectedOrder ? Math.max(0, cashReceived - selectedOrder.totalAmount) : 0;
+  // Find linked customer profile
+  const cid = selectedCustomerId || selectedOrder?.customerId;
+  const cname = custNameInput || selectedOrder?.customerName;
+  const cphone = custPhoneInput || selectedOrder?.customerPhone;
+
+  const matchedCustomer = customers.find(
+    c =>
+      (cid && c.id === cid) ||
+      (cname && cname.trim().toLowerCase() !== 'guest' && c.name.toLowerCase() === cname.toLowerCase()) ||
+      (cphone && cphone.trim() !== '' && c.phone === cphone)
+  );
+
+  const availablePoints = matchedCustomer ? (matchedCustomer.loyaltyPoints || 0) : 0;
+
+  // Enforce Max Redeemable Points (cannot exceed customer available points balance)
+  const effectiveRedeemPoints = Math.min(Math.max(0, redeemPoints || 0), availablePoints);
+  const pointsDiscountAmount = Math.max(0, effectiveRedeemPoints * 0.10); // $0.10 per point
+
+  // Active Customer Coupons for this member
+  const activeCustomerCoupons = matchedCustomer
+    ? coupons.filter(c => c.customerId === matchedCustomer.id && !c.isUsed)
+    : [];
+
+  // Checked coupons from checkboxes
+  const checkedCoupons = activeCustomerCoupons.filter(c => selectedCouponIds.includes(c.id));
+
+  let checkedCouponFixedDiscount = 0;
+  let checkedCouponPercentage = 0;
+  checkedCoupons.forEach(cp => {
+    if (cp.discountType === 'fixed') {
+      checkedCouponFixedDiscount += cp.discountValue;
+    } else if (cp.discountType === 'percentage') {
+      checkedCouponPercentage += cp.discountValue;
+    }
+  });
+
+  // Manual Promo / Coupon Code Logic
+  let promoFixedDiscount = 0;
+  let promoPercentage = 0;
+  let isValidPromoCode = false;
+  let couponMinSubtotalError = '';
+
+  if (couponCode.trim()) {
+    const codeUpper = couponCode.trim().toUpperCase();
+    const currentSubtotal = selectedOrder ? (selectedOrder.subtotal || selectedOrder.totalAmount) : 0;
+
+    // 1. Check Store Master Coupon Catalog first
+    const matchStoreCoupon = storeCoupons?.find(c => c.code.toUpperCase() === codeUpper && c.isActive);
+    if (matchStoreCoupon) {
+      if (!matchStoreCoupon.minSubtotal || currentSubtotal >= matchStoreCoupon.minSubtotal) {
+        isValidPromoCode = true;
+        if (matchStoreCoupon.discountType === 'fixed') {
+          promoFixedDiscount = matchStoreCoupon.discountValue;
+        } else {
+          promoPercentage = matchStoreCoupon.discountValue;
+        }
+      } else {
+        isValidPromoCode = false;
+        couponMinSubtotalError = `Requires min spend of $${matchStoreCoupon.minSubtotal.toFixed(2)}`;
+      }
+    } else {
+      // 2. Check Member Customer Vouchers
+      const matchCoupon = activeCustomerCoupons.find(c => c.code.toUpperCase() === codeUpper);
+      if (matchCoupon) {
+        isValidPromoCode = true;
+        if (matchCoupon.discountType === 'fixed') {
+          promoFixedDiscount = matchCoupon.discountValue;
+        } else {
+          promoPercentage = matchCoupon.discountValue;
+        }
+      } else {
+        // Fallback for demo standard legacy codes
+        if (codeUpper === 'WELCOME10' || codeUpper === 'VIP10') {
+          promoPercentage = 10;
+          isValidPromoCode = true;
+        } else if (codeUpper === 'SAVE5' || codeUpper === 'DISCOUNT5') {
+          promoFixedDiscount = 5;
+          isValidPromoCode = true;
+        } else if (codeUpper === 'VIP20') {
+          promoPercentage = 20;
+          isValidPromoCode = true;
+        } else {
+          isValidPromoCode = false;
+          promoFixedDiscount = 0;
+          promoPercentage = 0;
+        }
+      }
+    }
+  }
+
+  // Evaluate automatic combo / order promos
+  const autoPromoResult =
+    selectedOrder && promoRules
+      ? evaluateOrderPromos(
+          selectedOrder.items || [],
+          selectedOrder.subtotal || selectedOrder.totalAmount,
+          promoRules
+        )
+      : { appliedPromos: [], totalPromoDiscount: 0 };
+
+  // Combine discounts: 1. Points to money, 2. Coupon fixed, 3. Percentage off, 4. Auto Promos
+  const baseOrderTotal = selectedOrder ? selectedOrder.totalAmount : 0;
+  const totalPercentage = checkedCouponPercentage + promoPercentage;
+  const percentageDiscountAmount = (baseOrderTotal * totalPercentage) / 100;
+  const couponFixedDiscountAmount = checkedCouponFixedDiscount + promoFixedDiscount;
+
+  const totalDiscount = Math.min(
+    baseOrderTotal,
+    pointsDiscountAmount + couponFixedDiscountAmount + percentageDiscountAmount + autoPromoResult.totalPromoDiscount
+  );
+
+  const finalTotalAmount = Math.max(0, baseOrderTotal - totalDiscount);
+  const changeGiven = Math.max(0, cashReceived - finalTotalAmount);
 
   const handleSelectOrder = (ord: Order) => {
     setSelectedOrder(ord);
     setCashReceived(ord.totalAmount);
     setKeypadString(ord.totalAmount.toString());
     setIsSuccess(false);
+    setErrorMsg('');
+    setPaidSplitsCount(0);
+    setRedeemPoints(0);
+    setSelectedCouponIds([]);
   };
 
   const handleSaveCustomerInfo = () => {
@@ -131,9 +286,9 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
       return;
     }
     if (val === 'EXACT' && selectedOrder) {
-      const amtStr = selectedOrder.totalAmount.toFixed(2);
+      const amtStr = finalTotalAmount.toFixed(2);
       setKeypadString(amtStr);
-      setCashReceived(selectedOrder.totalAmount);
+      setCashReceived(finalTotalAmount);
       return;
     }
     if (val.startsWith('$')) {
@@ -153,26 +308,88 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   };
 
   const handleProcessPayment = () => {
+    setErrorMsg('');
     if (!selectedOrder) return;
+
+    if (selectedOrder.paymentStatus === 'Paid' || isSuccess) {
+      setErrorMsg('This order has already been paid and finalized.');
+      return;
+    }
+
+    if (paymentMethod === 'Cash' && cashReceived < finalTotalAmount) {
+      setErrorMsg(
+        `Insufficient cash tendered. Total payable is $${finalTotalAmount.toFixed(
+          2
+        )}, but tendered amount is $${cashReceived.toFixed(2)}.`
+      );
+      return;
+    }
+
+    if (paymentMethod === 'Split') {
+      const nextPaidCount = paidSplitsCount + 1;
+      if (nextPaidCount < splitCount) {
+        setPaidSplitsCount(nextPaidCount);
+        audioService.playClick();
+        return;
+      }
+    }
 
     const nameToSave = custNameInput.trim() || selectedOrder.customerName || 'Guest';
     const phoneToSave = custPhoneInput.trim() || selectedOrder.customerPhone || '';
+    const actualPaymentMethod: Order['paymentMethod'] =
+      paymentMethod === 'Split' ? 'Cash' : paymentMethod;
+
+    const couponCodeStr = [
+      ...checkedCoupons.map(c => c.code),
+      couponCode.trim() ? couponCode.trim().toUpperCase() : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+
+    const couponTotalDiscount = couponFixedDiscountAmount + percentageDiscountAmount;
 
     const updatedOrder: Order = {
       ...selectedOrder,
       customerName: nameToSave,
       customerPhone: phoneToSave,
-      customerId: selectedCustomerId || selectedOrder.customerId,
+      customerId: selectedCustomerId || selectedOrder.customerId || (matchedCustomer ? matchedCustomer.id : undefined),
+      subtotal: selectedOrder.subtotal || selectedOrder.totalAmount,
+      discountAmount: totalDiscount,
+      pointsRedeemed: effectiveRedeemPoints,
+      pointsDiscountAmount: pointsDiscountAmount,
+      couponCode: couponCodeStr || undefined,
+      couponDiscountAmount: couponTotalDiscount,
+      percentageDiscountAmount: percentageDiscountAmount,
+      promoDiscountAmount: autoPromoResult.totalPromoDiscount,
+      appliedPromos: autoPromoResult.appliedPromos,
+      customerPointsBalance: Math.max(0, availablePoints - effectiveRedeemPoints),
+      totalAmount: finalTotalAmount,
       paymentStatus: 'Paid',
-      paymentMethod: paymentMethod,
+      paymentMethod: actualPaymentMethod,
       status: 'Completed',
       updatedAt: new Date().toISOString(),
     };
 
     onCompletePayment(selectedOrder.id, {
-      method: paymentMethod,
-      cashReceived: paymentMethod === 'Cash' ? cashReceived : undefined,
-      changeGiven: paymentMethod === 'Cash' ? changeGiven : undefined,
+      method: actualPaymentMethod,
+      cashReceived: actualPaymentMethod === 'Cash' ? cashReceived : undefined,
+      changeGiven: actualPaymentMethod === 'Cash' ? changeGiven : undefined,
+      pointsRedeemed: effectiveRedeemPoints,
+      pointsDiscountAmount: pointsDiscountAmount,
+      couponCode: couponCodeStr || undefined,
+      couponDiscountAmount: couponTotalDiscount,
+      percentageDiscountAmount: percentageDiscountAmount,
+      promoDiscountAmount: autoPromoResult.totalPromoDiscount,
+      appliedPromos: autoPromoResult.appliedPromos,
+      discountPercentage: totalPercentage,
+      usedCouponIds: checkedCoupons.map(c => c.id),
+      totalDiscount: totalDiscount,
+      subtotal: selectedOrder.subtotal || selectedOrder.totalAmount,
+      customerName: nameToSave,
+      customerPhone: phoneToSave,
+      customerId: selectedCustomerId || selectedOrder.customerId || (matchedCustomer ? matchedCustomer.id : undefined),
+      finalTotalAmount: finalTotalAmount,
+      customerPointsBalance: Math.max(0, availablePoints - effectiveRedeemPoints),
     });
 
     if (onUpdateOrderDetails) {
@@ -187,10 +404,29 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
 
   const handlePrint = () => {
     if (selectedOrder) {
+      const couponCodeStr = [
+        ...checkedCoupons.map(c => c.code),
+        couponCode.trim() ? couponCode.trim().toUpperCase() : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+
+      const couponTotalDiscount = couponFixedDiscountAmount + percentageDiscountAmount;
+
       const orderToPrint: Order = {
         ...selectedOrder,
-        paymentStatus: isSuccess ? 'Paid' : selectedOrder.paymentStatus,
-        paymentMethod: isSuccess ? (paymentMethod || selectedOrder.paymentMethod || 'Cash') : selectedOrder.paymentMethod,
+        subtotal: selectedOrder.subtotal || baseOrderTotal,
+        discountAmount: totalDiscount > 0 ? totalDiscount : selectedOrder.discountAmount,
+        pointsRedeemed: effectiveRedeemPoints > 0 ? effectiveRedeemPoints : selectedOrder.pointsRedeemed,
+        pointsDiscountAmount: pointsDiscountAmount > 0 ? pointsDiscountAmount : selectedOrder.pointsDiscountAmount,
+        couponCode: couponCodeStr || selectedOrder.couponCode,
+        couponDiscountAmount: couponTotalDiscount > 0 ? couponTotalDiscount : selectedOrder.couponDiscountAmount,
+        percentageDiscountAmount: percentageDiscountAmount > 0 ? percentageDiscountAmount : selectedOrder.percentageDiscountAmount,
+        promoDiscountAmount: autoPromoResult.totalPromoDiscount > 0 ? autoPromoResult.totalPromoDiscount : selectedOrder.promoDiscountAmount,
+        appliedPromos: autoPromoResult.appliedPromos.length > 0 ? autoPromoResult.appliedPromos : selectedOrder.appliedPromos,
+        totalAmount: finalTotalAmount < baseOrderTotal ? finalTotalAmount : selectedOrder.totalAmount,
+        paymentStatus: isSuccess ? 'Paid' : (selectedOrder.paymentStatus || 'Unpaid'),
+        paymentMethod: isSuccess ? (paymentMethod || selectedOrder.paymentMethod || 'Cash') : (selectedOrder.paymentMethod || 'Unpaid'),
         status: isSuccess ? 'Completed' : selectedOrder.status,
       };
       receiptService.printReceipt(orderToPrint, settings);
@@ -251,7 +487,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         </div>
 
         {/* Right Column: Active Terminal (8 cols) */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-lg dark:border-gray-800 dark:bg-gray-900 lg:col-span-8">
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-lg dark:border-gray-800 dark:bg-gray-900 lg:col-span-8 overflow-y-auto overscroll-contain touch-pan-y">
           {selectedOrder ? (
             <div className="space-y-5">
               {/* Top Order Overview */}
@@ -469,12 +705,255 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                 )}
               </div>
 
+              {/* Discounts & Loyalty Rewards Section */}
+              <div className="space-y-3">
+                {/* 1. Points Redemption: Left Box (Point Controls) & Right Box (Monetary Discount) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-2xl border border-amber-300 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30">
+                  {/* LEFT BOX: Points Input & Controls */}
+                  <div className="rounded-xl border border-amber-200 bg-white p-3 dark:border-amber-900/60 dark:bg-gray-900 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-black text-gray-800 dark:text-gray-200 flex items-center">
+                        <Sparkles className="mr-1.5 h-3.5 w-3.5 text-amber-500" /> Redeem Loyalty Points
+                      </label>
+                      <span className="text-[11px] font-extrabold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 px-2 py-0.5 rounded-full">
+                        {availablePoints} pts Available
+                      </span>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        max={availablePoints}
+                        value={redeemPoints || ''}
+                        onChange={e => {
+                          const val = parseInt(e.target.value) || 0;
+                          setRedeemPoints(Math.max(0, Math.min(val, availablePoints)));
+                        }}
+                        placeholder="Enter pts"
+                        className="flex-1 rounded-lg border border-gray-300 bg-white p-2 text-xs font-black text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white focus:border-[#FF8A00] focus:outline-hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setRedeemPoints(availablePoints)}
+                        disabled={availablePoints <= 0}
+                        className="rounded-lg bg-amber-500 px-2.5 py-2 text-[11px] font-black text-white hover:bg-amber-600 transition-colors shrink-0 disabled:opacity-50"
+                      >
+                        Max Pts
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRedeemPoints(0)}
+                        className="rounded-lg bg-gray-200 dark:bg-gray-700 px-2 py-2 text-[11px] font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors shrink-0"
+                      >
+                        Clear
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] font-bold text-gray-500 dark:text-gray-400">
+                      <span>Max limit: {availablePoints} pts</span>
+                      <span>10 Pts = $1.00 Off ($0.10/pt)</span>
+                    </div>
+                  </div>
+
+                  {/* RIGHT BOX: Money Discount Converted From Points */}
+                  <div className="rounded-xl border border-emerald-300 bg-emerald-50/80 p-3 dark:border-emerald-900/80 dark:bg-emerald-950/50 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase tracking-wider">
+                        Point Cash Value
+                      </span>
+                      <span className="text-[10px] font-extrabold text-emerald-800 dark:text-emerald-300 rounded-full bg-emerald-200/80 dark:bg-emerald-900/80 px-2 py-0.5">
+                        Money Discount
+                      </span>
+                    </div>
+
+                    <div className="my-1.5">
+                      <div className="text-2xl font-black text-emerald-600 dark:text-emerald-300">
+                        -${pointsDiscountAmount.toFixed(2)}
+                      </div>
+                      <p className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">
+                        {effectiveRedeemPoints > 0
+                          ? `Discount for ${effectiveRedeemPoints} redeemed pts`
+                          : 'No points applied for cash discount'}
+                      </p>
+                    </div>
+
+                    <p className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-400/80">
+                      Deducted from customer balance upon checkout.
+                    </p>
+                  </div>
+                </div>
+
+                {/* 2. Extra Line for Promo / Coupon Code & Active Coupons List */}
+                <div className="rounded-2xl border border-gray-200 bg-white p-3.5 dark:border-gray-800 dark:bg-gray-900 space-y-3 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-gray-800 dark:text-gray-200 flex items-center">
+                      <Gift className="mr-1.5 h-4 w-4 text-[#FF8A00]" /> Promo / Coupon Code & Member Vouchers
+                    </span>
+                    {(couponFixedDiscountAmount > 0 || percentageDiscountAmount > 0) && (
+                      <span className="text-[11px] font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950 px-2 py-0.5 rounded-md">
+                        -${(couponFixedDiscountAmount + percentageDiscountAmount).toFixed(2)} Coupon Off
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Extra Line 1: Promo Code Input */}
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-gray-700 dark:text-gray-300 mb-1">
+                      Promo / Coupon Code
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={couponCode}
+                        onChange={e => setCouponCode(e.target.value)}
+                        placeholder="e.g. WELCOME10 (10% off), SAVE5 ($5 off), VIP20"
+                        className="w-full rounded-lg border border-gray-300 bg-white p-2 text-xs font-bold uppercase text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white focus:border-[#FF8A00] focus:outline-hidden pr-28"
+                      />
+                      {couponCode.trim() && (
+                        <span className="absolute right-2 top-2 text-[10px] font-black">
+                          {isValidPromoCode ? (
+                            <span className="text-emerald-600 dark:text-emerald-400 flex items-center bg-emerald-50 dark:bg-emerald-950 px-1.5 py-0.5 rounded">
+                              <CheckCircle2 className="mr-0.5 h-3 w-3" /> Valid Code
+                            </span>
+                          ) : (
+                            <span className="text-rose-500 flex items-center bg-rose-50 dark:bg-rose-950 px-1.5 py-0.5 rounded">
+                              <X className="mr-0.5 h-3 w-3" /> {couponMinSubtotalError || 'Invalid Code ($0 off)'}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Quick-Select Store Coupons */}
+                    {storeCoupons && storeCoupons.filter(c => c.isActive).length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        <span className="text-[10px] font-bold text-gray-400">Quick Select:</span>
+                        {storeCoupons
+                          .filter(c => c.isActive)
+                          .map(cpn => {
+                            const isSelected = couponCode.trim().toUpperCase() === cpn.code;
+                            return (
+                              <button
+                                key={cpn.id}
+                                type="button"
+                                onClick={() => setCouponCode(cpn.code)}
+                                className={`rounded-md px-2 py-0.5 text-[10px] font-mono font-black transition-all cursor-pointer border ${
+                                  isSelected
+                                    ? 'bg-[#FF8A00] text-white border-[#FF8A00] shadow-xs'
+                                    : 'bg-amber-50/80 text-amber-900 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900/60'
+                                }`}
+                              >
+                                🏷️ {cpn.code} ({cpn.discountType === 'fixed' ? `$${cpn.discountValue} OFF` : `${cpn.discountValue}% OFF`})
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Extra Line 2: Active Customer Coupons Checkboxes List */}
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-gray-700 dark:text-gray-300 mb-1.5 flex items-center justify-between">
+                      <span>Active Member Coupons ({activeCustomerCoupons.length})</span>
+                      {matchedCustomer && activeCustomerCoupons.length > 0 && (
+                        <span className="text-[10px] text-gray-400 font-semibold">
+                          Check boxes to apply coupon
+                        </span>
+                      )}
+                    </label>
+
+                    {!matchedCustomer ? (
+                      <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-2.5 text-center text-[11px] font-semibold text-gray-500">
+                        Select a member customer above to display their active coupons.
+                      </div>
+                    ) : activeCustomerCoupons.length === 0 ? (
+                      <div className="rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-900/40 p-2.5 text-center text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                        No active coupons available for {matchedCustomer.name}. Loyalty points can be redeemed for new vouchers in Customer Directory!
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                        {activeCustomerCoupons.map(cp => {
+                          const isChecked = selectedCouponIds.includes(cp.id);
+                          return (
+                            <label
+                              key={cp.id}
+                              className={`flex items-center justify-between rounded-xl border p-2.5 text-xs transition-all cursor-pointer ${
+                                isChecked
+                                  ? 'border-emerald-500 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/60 font-extrabold text-emerald-950 dark:text-emerald-100 shadow-2xs'
+                                  : 'border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/60 text-gray-800 dark:text-gray-200'
+                              }`}
+                            >
+                              <div className="flex items-center space-x-2.5">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={e => {
+                                    if (e.target.checked) {
+                                      setSelectedCouponIds(prev => [...prev, cp.id]);
+                                    } else {
+                                      setSelectedCouponIds(prev => prev.filter(id => id !== cp.id));
+                                    }
+                                  }}
+                                  className="h-4 w-4 rounded-md border-gray-300 text-[#FF8A00] focus:ring-[#FF8A00]"
+                                />
+                                <div>
+                                  <span className="font-extrabold">{cp.title}</span>
+                                  <span className="ml-2 font-mono text-[10px] text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950 px-1.5 py-0.5 rounded font-black">
+                                    {cp.code}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <span className="font-black text-emerald-600 dark:text-emerald-400 text-xs shrink-0">
+                                {cp.discountType === 'fixed' ? `-$${cp.discountValue.toFixed(2)}` : `-${cp.discountValue}% Off`}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Combined Discount Summary Banner */}
+                {totalDiscount > 0 && (
+                  <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 dark:bg-emerald-950/40 dark:border-emerald-900/60 space-y-1 text-xs text-emerald-900 dark:text-emerald-200 font-bold">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
+                        <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                        <span>Total Combined Discount:</span>
+                      </div>
+                      <span className="text-sm font-black text-emerald-600 dark:text-emerald-300">
+                        -${totalDiscount.toFixed(2)}
+                      </span>
+                    </div>
+
+                    {/* Auto Promo Breakdown list */}
+                    {autoPromoResult.appliedPromos.map((p, idx) => (
+                      <div key={idx} className="flex items-center justify-between pl-5 text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
+                        <span>🎁 {p.title} ({p.reason})</span>
+                        <span className="font-extrabold">-${p.discountAmount.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Error Message Banner */}
+              {errorMsg && (
+                <div className="flex items-center space-x-2 rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs font-bold text-rose-700 dark:bg-rose-950/50 dark:border-rose-900 dark:text-rose-300">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
               {/* Payment Methods Grid */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">
                   Select Payment Method
                 </label>
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
                   {[
                     { id: 'Cash', icon: DollarSign, label: 'Cash' },
                     { id: 'Credit Card', icon: CreditCard, label: 'Credit Card' },
@@ -482,26 +961,86 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                     { id: 'QR Code', icon: QrCode, label: 'QR Code' },
                     { id: 'UPI', icon: Smartphone, label: 'UPI' },
                     { id: 'Digital Wallet', icon: Smartphone, label: 'Wallet' },
+                    { id: 'Split', icon: Users, label: 'Split Bill' },
                   ].map(m => {
                     const Icon = m.icon;
                     const isSelected = paymentMethod === m.id;
                     return (
                       <button
                         key={m.id}
-                        onClick={() => setPaymentMethod(m.id as Order['paymentMethod'])}
-                        className={`flex flex-col items-center justify-center rounded-xl border p-2.5 text-center transition-all ${
+                        type="button"
+                        onClick={() => {
+                          setPaymentMethod(m.id as any);
+                          setErrorMsg('');
+                        }}
+                        className={`flex flex-col items-center justify-center rounded-xl border p-2 text-center transition-all ${
                           isSelected
                             ? 'border-[#FF8A00] bg-orange-50 text-[#FF8A00] ring-2 ring-[#FF8A00]/20 font-bold dark:bg-orange-950/40'
                             : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-300'
                         }`}
                       >
                         <Icon className="h-4 w-4 mb-1" />
-                        <span className="text-[11px]">{m.label}</span>
+                        <span className="text-[10px] font-bold">{m.label}</span>
                       </button>
                     );
                   })}
                 </div>
               </div>
+
+              {/* Split Bill Interface */}
+              {paymentMethod === 'Split' && (
+                <div className="rounded-2xl bg-indigo-50/70 p-4 border border-indigo-200/80 dark:bg-indigo-950/30 dark:border-indigo-900/50 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-indigo-900 dark:text-indigo-200 flex items-center">
+                      <Users className="mr-1.5 h-4 w-4 text-indigo-600" /> Split Bill Breakdown
+                    </span>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">People:</span>
+                      <button
+                        type="button"
+                        onClick={() => setSplitCount(Math.max(2, splitCount - 1))}
+                        className="h-6 w-6 rounded bg-white shadow-2xs font-bold text-gray-800 dark:bg-gray-800 dark:text-white"
+                      >
+                        -
+                      </button>
+                      <span className="font-extrabold text-sm text-indigo-700 dark:text-indigo-300 px-1">
+                        {splitCount}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSplitCount(splitCount + 1)}
+                        className="h-6 w-6 rounded bg-white shadow-2xs font-bold text-gray-800 dark:bg-gray-800 dark:text-white"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-xl border border-gray-200 bg-white p-2.5 dark:border-gray-700 dark:bg-gray-900">
+                      <span className="block text-[10px] font-bold text-gray-400">Total Bill Payable</span>
+                      <span className="text-base font-black text-gray-900 dark:text-white">
+                        ${finalTotalAmount.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="rounded-xl border border-indigo-200 bg-indigo-100/50 p-2.5 dark:border-indigo-800 dark:bg-indigo-900/40">
+                      <span className="block text-[10px] font-bold text-indigo-600 dark:text-indigo-300">
+                        Per Person Share ({splitCount} people)
+                      </span>
+                      <span className="text-base font-black text-indigo-800 dark:text-indigo-200">
+                        ${(finalTotalAmount / splitCount).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 flex items-center justify-between pt-1">
+                    <span>Splits Paid So Far:</span>
+                    <span className="font-extrabold text-xs">
+                      {paidSplitsCount} / {splitCount} splits settled
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Cash Calculator Pane */}
               {paymentMethod === 'Cash' && (
@@ -633,18 +1172,29 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                 </div>
               )}
 
-              {/* Complete Payment Button */}
-              <div className="flex items-center space-x-3 pt-2">
+              {/* Complete Payment Button - Sticky Bottom */}
+              <div className="sticky bottom-0 z-20 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xs pt-3 pb-1 border-t border-gray-100 dark:border-gray-800 flex items-center space-x-3 shadow-xs mt-4">
                 <button
+                  type="button"
                   onClick={handleProcessPayment}
-                  className="flex-1 rounded-xl bg-[#FF8A00] py-3.5 text-xs font-bold text-white shadow-md hover:bg-[#e07900] transition-all"
+                  disabled={selectedOrder.paymentStatus === 'Paid' || isSuccess}
+                  className={`flex-1 rounded-xl py-3.5 text-xs font-bold text-white shadow-md transition-all cursor-pointer ${
+                    selectedOrder.paymentStatus === 'Paid' || isSuccess
+                      ? 'bg-emerald-600 cursor-not-allowed opacity-90'
+                      : 'bg-[#FF8A00] hover:bg-[#e07900] active:scale-98'
+                  }`}
                 >
-                  Complete ${selectedOrder.totalAmount.toFixed(2)} Payment
+                  {selectedOrder.paymentStatus === 'Paid' || isSuccess
+                    ? '✓ Payment Completed'
+                    : paymentMethod === 'Split'
+                    ? `Collect Split ${paidSplitsCount + 1}/${splitCount} ($${(finalTotalAmount / splitCount).toFixed(2)})`
+                    : `Complete $${finalTotalAmount.toFixed(2)} Payment`}
                 </button>
 
                 <button
+                  type="button"
                   onClick={handlePrint}
-                  className="flex items-center space-x-1.5 rounded-xl border border-gray-200 px-4 py-3.5 text-xs font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200"
+                  className="flex items-center space-x-1.5 rounded-xl border border-gray-200 px-4 py-3.5 text-xs font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 cursor-pointer"
                 >
                   <Printer className="h-4 w-4" />
                   <span>Print Receipt</span>

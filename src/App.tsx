@@ -6,6 +6,9 @@ import {
   INITIAL_ORDERS,
   INITIAL_RESERVATIONS,
   INITIAL_CUSTOMERS,
+  INITIAL_COUPONS,
+  INITIAL_STORE_COUPONS,
+  INITIAL_PROMO_RULES,
   INITIAL_INVENTORY,
   INITIAL_SUPPLIERS,
   INITIAL_EMPLOYEES,
@@ -17,12 +20,15 @@ import {
 } from './data/mockData';
 import {
   Table,
+  TableStatus,
   MenuItem,
   Order,
   Reservation,
   WaitlistItem,
   Customer,
   CustomerCoupon,
+  CouponCode,
+  PromoRule,
   InventoryItem,
   Supplier,
   Employee,
@@ -31,7 +37,9 @@ import {
   Role,
   OrderStatus,
   ActivityLog,
+  AppliedPromo,
 } from './types';
+import { findExistingCustomer, isSameCustomer, isPhoneMatch, mergeCustomerProfiles } from './utils/customerUtils';
 import { Header } from './components/Header';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { AuthModal } from './components/AuthModal';
@@ -55,8 +63,10 @@ import { PublicLandingView } from './components/PublicLandingView';
 import { MembershipModal } from './components/MembershipModal';
 import { ThermalReceiptModal } from './components/ThermalReceiptModal';
 import { ReceiptsView } from './components/ReceiptsView';
+import { PromosAndCouponsView } from './components/PromosAndCouponsView';
 import { receiptService } from './services/receiptService';
 import { gasService, parseSheetsDataToState } from './services/gasService';
+import { getTodayUTC8, formatTimeUTC8 } from './utils/dateUtils';
 
 const TAB_PATH_MAP: Record<ActiveTab, string> = {
   landing: '/',
@@ -70,6 +80,7 @@ const TAB_PATH_MAP: Record<ActiveTab, string> = {
   reservations: '/reservations',
   inventory: '/inventory',
   customers: '/customers',
+  promos: '/promos',
   staff: '/staff',
   logs: '/logs',
   analytics: '/analytics',
@@ -90,6 +101,7 @@ const getTabFromURL = (): ActiveTab => {
   if (combined.includes('reservation')) return 'reservations';
   if (combined.includes('inventory')) return 'inventory';
   if (combined.includes('customer')) return 'customers';
+  if (combined.includes('promo') || combined.includes('coupon')) return 'promos';
   if (combined.includes('staff') || combined.includes('employee')) return 'staff';
   if (combined.includes('analytics')) return 'analytics';
   if (combined.includes('setting')) return 'settings';
@@ -119,7 +131,7 @@ function mergeById<T extends { id: string; updatedAt?: string; timestamp?: strin
     const localObj = localItem as any;
     const remoteObj = remoteItem as any;
 
-    // 1. Order-specific multi-device conflict resolution
+      // 1. Order-specific multi-device conflict resolution
     if (localObj.orderNumber || remoteObj.orderNumber) {
       const localTime = new Date(localObj.updatedAt || localObj.createdAt || 0).getTime();
       const remoteTime = new Date(remoteObj.updatedAt || remoteObj.createdAt || 0).getTime();
@@ -171,15 +183,78 @@ function mergeById<T extends { id: string; updatedAt?: string; timestamp?: strin
 
       const base = remoteTime >= localTime ? remoteObj : localObj;
 
+      // Preserve discount and promo structures
+      const subtotal = localObj.subtotal || remoteObj.subtotal || calcTotal;
+      const discountAmount = localObj.discountAmount !== undefined ? localObj.discountAmount : (remoteObj.discountAmount || 0);
+      const discountPercentage = localObj.discountPercentage !== undefined ? localObj.discountPercentage : (remoteObj.discountPercentage || 0);
+      const pointsRedeemed = localObj.pointsRedeemed || remoteObj.pointsRedeemed || 0;
+      const pointsDiscountAmount = localObj.pointsDiscountAmount !== undefined ? localObj.pointsDiscountAmount : (remoteObj.pointsDiscountAmount || 0);
+      const couponCode = localObj.couponCode || remoteObj.couponCode || '';
+      const couponDiscountAmount = localObj.couponDiscountAmount !== undefined ? localObj.couponDiscountAmount : (remoteObj.couponDiscountAmount || 0);
+      const percentageDiscountAmount = localObj.percentageDiscountAmount !== undefined ? localObj.percentageDiscountAmount : (remoteObj.percentageDiscountAmount || 0);
+      const promoDiscountAmount = localObj.promoDiscountAmount !== undefined ? localObj.promoDiscountAmount : (remoteObj.promoDiscountAmount || 0);
+      const appliedPromos = (localObj.appliedPromos && localObj.appliedPromos.length > 0) ? localObj.appliedPromos : (remoteObj.appliedPromos || []);
+      const customerPointsBalance = localObj.customerPointsBalance !== undefined ? localObj.customerPointsBalance : remoteObj.customerPointsBalance;
+      const customerId = localObj.customerId || remoteObj.customerId;
+      const customerName = localObj.customerName || remoteObj.customerName;
+      const customerPhone = localObj.customerPhone || remoteObj.customerPhone;
+
+      const resolvedTotal = (localObj.paymentStatus === 'Paid' && localObj.totalAmount)
+        ? localObj.totalAmount
+        : (base.totalAmount || Math.max(0, calcTotal - discountAmount));
+
       return {
         ...base,
         status,
         paymentStatus,
         paymentMethod,
         items: mergedItems,
-        totalAmount: calcTotal > 0 ? calcTotal : (base.totalAmount || 0),
+        subtotal: subtotal > 0 ? subtotal : calcTotal,
+        discountAmount,
+        discountPercentage,
+        pointsRedeemed,
+        pointsDiscountAmount,
+        couponCode,
+        couponDiscountAmount,
+        percentageDiscountAmount,
+        promoDiscountAmount,
+        appliedPromos,
+        customerPointsBalance,
+        customerId,
+        customerName,
+        customerPhone,
+        totalAmount: resolvedTotal,
         updatedAt: new Date(Math.max(localTime, remoteTime, Date.now())).toISOString(),
       } as T;
+    }
+
+    // Customer-specific conflict resolution
+    if (localObj.loyaltyPoints !== undefined || remoteObj.loyaltyPoints !== undefined) {
+      const localPoints = Number(localObj.loyaltyPoints || 0);
+      const remotePoints = Number(remoteObj.loyaltyPoints || 0);
+      const localSpent = Number(localObj.totalSpent || 0);
+      const remoteSpent = Number(remoteObj.totalSpent || 0);
+      const localVisits = Number(localObj.visitCount || 0);
+      const remoteVisits = Number(remoteObj.visitCount || 0);
+      const localTime = new Date(localObj.updatedAt || localObj.lastVisit || 0).getTime();
+      const remoteTime = new Date(remoteObj.updatedAt || remoteObj.lastVisit || 0).getTime();
+
+      if (localTime > remoteTime) {
+        return { ...remoteObj, ...localObj };
+      } else if (remoteTime > localTime) {
+        return { ...localObj, ...remoteObj };
+      } else {
+        const bestPoints = Math.max(localPoints, remotePoints);
+        const bestSpent = Math.max(localSpent, remoteSpent);
+        const bestVisits = Math.max(localVisits, remoteVisits);
+        return {
+          ...remoteObj,
+          ...localObj,
+          loyaltyPoints: bestPoints,
+          totalSpent: bestSpent,
+          visitCount: bestVisits,
+        };
+      }
     }
 
     // Waitlist-specific conflict resolution
@@ -205,10 +280,8 @@ function mergeById<T extends { id: string; updatedAt?: string; timestamp?: strin
       const localTime = new Date(localObj.updatedAt || 0).getTime();
       const remoteTime = new Date(remoteObj.updatedAt || 0).getTime();
 
-      let merged = remoteItem;
-      if (localTime > remoteTime) {
-        merged = { ...remoteObj, ...localObj };
-      } else if (localObj.status === 'Occupied' && remoteObj.status === 'Available') {
+      let merged = { ...localObj, ...remoteObj };
+      if (localTime > remoteTime && localObj.updatedAt) {
         merged = { ...remoteObj, ...localObj };
       }
 
@@ -250,6 +323,7 @@ function mergeById<T extends { id: string; updatedAt?: string; timestamp?: strin
     }
   });
 
+  const now = Date.now();
   localArr.forEach(localItem => {
     if (localItem && localItem.id) {
       const id = String(localItem.id);
@@ -257,7 +331,14 @@ function mergeById<T extends { id: string; updatedAt?: string; timestamp?: strin
         const remoteItem = map.get(id)!;
         map.set(id, chooseNewer(remoteItem, localItem));
       } else {
-        map.set(id, localItem);
+        // Only preserve if created/updated locally in the last 15 seconds (in-flight client creation)
+        const localObj = localItem as any;
+        const itemTime = new Date(localObj.updatedAt || localObj.createdAt || localObj.timestamp || 0).getTime();
+        const ageMs = now - itemTime;
+        if (itemTime > 0 && ageMs < 15000) {
+          map.set(id, localItem);
+        }
+        // Otherwise, it was deleted in Google Sheets DB -> remove from web state!
       }
     }
   });
@@ -286,17 +367,22 @@ export default function App() {
     return params.get('table') || params.get('tablename');
   });
 
+  // Helper for safe localStorage parsing (BUG-016)
+  const safeParseLocalStorage = <T,>(key: string, fallback: T): T => {
+    try {
+      const saved = localStorage.getItem(key);
+      if (!saved) return fallback;
+      const parsed = JSON.parse(saved);
+      return parsed ?? fallback;
+    } catch (e) {
+      console.error(`Failed to parse localStorage key "${key}":`, e);
+      return fallback;
+    }
+  };
+
   // Auth & Membership State
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('pos_current_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.warn('Failed to parse saved user from localStorage:', e);
-      }
-    }
-    return DEMO_USERS[0];
+    return safeParseLocalStorage('pos_current_user', DEMO_USERS[0]);
   });
 
   // Sync currentUser changes to LocalStorage
@@ -312,60 +398,90 @@ export default function App() {
   const [showMembershipModal, setShowMembershipModal] = useState<boolean>(false);
 
   const [coupons, setCoupons] = useState<CustomerCoupon[]>(() => {
-    const saved = localStorage.getItem('pos_coupons');
-    return saved ? JSON.parse(saved) : [];
+    return safeParseLocalStorage('pos_coupons', INITIAL_COUPONS);
   });
+
+  const [storeCoupons, setStoreCoupons] = useState<CouponCode[]>(() => {
+    return safeParseLocalStorage('pos_store_coupons', INITIAL_STORE_COUPONS);
+  });
+
+  const [promoRules, setPromoRules] = useState<PromoRule[]>(() => {
+    return safeParseLocalStorage('pos_promo_rules', INITIAL_PROMO_RULES);
+  });
+
+  useEffect(() => {
+    localStorage.setItem('pos_coupons', JSON.stringify(coupons));
+  }, [coupons]);
+
+  useEffect(() => {
+    localStorage.setItem('pos_store_coupons', JSON.stringify(storeCoupons));
+  }, [storeCoupons]);
+
+  useEffect(() => {
+    localStorage.setItem('pos_promo_rules', JSON.stringify(promoRules));
+  }, [promoRules]);
 
   // Core POS Entity States with LocalStorage Persistence
   const [tables, setTables] = useState<Table[]>(() => {
-    const saved = localStorage.getItem('pos_tables');
-    return saved ? JSON.parse(saved) : INITIAL_TABLES;
+    return safeParseLocalStorage('pos_tables', INITIAL_TABLES);
   });
 
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
-    const saved = localStorage.getItem('pos_menu');
-    return saved ? JSON.parse(saved) : INITIAL_MENU_ITEMS;
+    const saved: MenuItem[] = safeParseLocalStorage('pos_menu', INITIAL_MENU_ITEMS);
+    const existingIds = new Set(saved.map(m => m.id));
+    const missing = INITIAL_MENU_ITEMS.filter(m => !existingIds.has(m.id));
+    if (missing.length > 0) {
+      const combined = [...saved, ...missing];
+      localStorage.setItem('pos_menu', JSON.stringify(combined));
+      return combined;
+    }
+    return saved;
   });
 
   const [orders, setOrders] = useState<Order[]>(() => {
-    const saved = localStorage.getItem('pos_orders');
-    return saved ? JSON.parse(saved) : INITIAL_ORDERS;
+    return safeParseLocalStorage('pos_orders', INITIAL_ORDERS);
   });
 
   const [reservations, setReservations] = useState<Reservation[]>(() => {
-    const saved = localStorage.getItem('pos_reservations');
-    return saved ? JSON.parse(saved) : INITIAL_RESERVATIONS;
+    return safeParseLocalStorage('pos_reservations', INITIAL_RESERVATIONS);
   });
 
   const [waitlist, setWaitlist] = useState<WaitlistItem[]>(() => {
-    const saved = localStorage.getItem('gbg_waitlist');
-    return saved ? JSON.parse(saved) : initialWaitlist;
+    return safeParseLocalStorage('gbg_waitlist', initialWaitlist);
   });
 
   useEffect(() => {
     localStorage.setItem('gbg_waitlist', JSON.stringify(waitlist));
   }, [waitlist]);
 
+  const [deletedCustomerIds, setDeletedCustomerIds] = useState<string[]>(() => {
+    return safeParseLocalStorage('pos_deleted_customer_ids', []);
+  });
+  const deletedCustomerIdsRef = useRef<string[]>(deletedCustomerIds);
+  useEffect(() => {
+    deletedCustomerIdsRef.current = deletedCustomerIds;
+    localStorage.setItem('pos_deleted_customer_ids', JSON.stringify(deletedCustomerIds));
+  }, [deletedCustomerIds]);
+
   const [customers, setCustomers] = useState<Customer[]>(() => {
-    const saved = localStorage.getItem('pos_customers');
-    return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
+    const loaded: Customer[] = safeParseLocalStorage('pos_customers', INITIAL_CUSTOMERS);
+    const deleted: string[] = safeParseLocalStorage('pos_deleted_customer_ids', []);
+    const deletedSet = new Set(deleted);
+    return loaded.filter((c: Customer) => c && c.id && !deletedSet.has(String(c.id)));
   });
 
   const [inventory, setInventory] = useState<InventoryItem[]>(() => {
-    const saved = localStorage.getItem('pos_inventory');
-    return saved ? JSON.parse(saved) : INITIAL_INVENTORY;
+    return safeParseLocalStorage('pos_inventory', INITIAL_INVENTORY);
   });
 
   const [suppliers] = useState<Supplier[]>(INITIAL_SUPPLIERS);
 
   const [employees, setEmployees] = useState<Employee[]>(() => {
-    const saved = localStorage.getItem('pos_employees');
-    return saved ? JSON.parse(saved) : INITIAL_EMPLOYEES;
+    return safeParseLocalStorage('pos_employees', INITIAL_EMPLOYEES);
   });
 
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => {
-    const saved = localStorage.getItem('pos_activity_logs');
-    const logs: ActivityLog[] = saved ? JSON.parse(saved) : INITIAL_ACTIVITY_LOGS;
+    const logs: ActivityLog[] = safeParseLocalStorage('pos_activity_logs', INITIAL_ACTIVITY_LOGS);
     const map = new Map<string, ActivityLog>();
     logs.forEach(l => {
       if (l && l.id && !map.has(String(l.id))) {
@@ -405,18 +521,20 @@ export default function App() {
   }, []);
 
   // Helper to ensure customer account exists or update stats
-  const ensureCustomerAccount = (name?: string, phone?: string, email?: string, amount = 0, dishNames: string[] = []) => {
+  const ensureCustomerAccount = (
+    name?: string,
+    phone?: string,
+    email?: string,
+    amount = 0,
+    dishNames: string[] = [],
+    isCompletedPayment = false
+  ) => {
     if (!name || name.trim() === '' || name.toLowerCase() === 'guest' || name === 'Walk-in Guest') return;
     const custName = name.trim();
     const custPhone = phone ? phone.trim() : '';
     const custEmail = email ? email.trim() : '';
 
-    const existingMember = customers.find(
-      c =>
-        c.name.toLowerCase() === custName.toLowerCase() ||
-        (custPhone !== '' && c.phone && c.phone.trim() === custPhone) ||
-        (custEmail !== '' && c.email && c.email.toLowerCase() === custEmail.toLowerCase())
-    );
+    const existingMember = findExistingCustomer(customers, { name: custName, phone: custPhone, email: custEmail });
 
     if (!existingMember) {
       const newMember: Customer = {
@@ -424,59 +542,115 @@ export default function App() {
         name: custName,
         phone: custPhone,
         email: custEmail,
-        loyaltyPoints: 100,
-        visitCount: 1,
-        totalSpent: amount,
+        loyaltyPoints: 100 + (isCompletedPayment ? Math.floor(amount) : 0),
+        visitCount: isCompletedPayment ? 1 : 0,
+        totalSpent: isCompletedPayment ? amount : 0,
         tier: 'Bronze',
         favoriteDishes: dishNames,
-        lastVisit: new Date().toISOString().split('T')[0],
+        lastVisit: getTodayUTC8(),
       };
       setCustomers(prev => [newMember, ...prev]);
       gasService.syncCustomer(newMember);
       logActivity('Auto Membership', `Registered membership account for ${custName}`);
     } else {
+      // Merge favorite dishes and update stats
+      const existingFavs = existingMember.favoriteDishes || [];
+      const updatedFavs = Array.from(new Set([...existingFavs, ...dishNames]));
       const updatedMember: Customer = {
         ...existingMember,
-        visitCount: (existingMember.visitCount || 0) + 1,
-        totalSpent: (existingMember.totalSpent || 0) + amount,
-        lastVisit: new Date().toISOString().split('T')[0],
-        phone: custPhone || existingMember.phone,
-        email: custEmail || existingMember.email,
+        favoriteDishes: updatedFavs,
+        visitCount: isCompletedPayment ? (existingMember.visitCount || 0) + 1 : existingMember.visitCount,
+        totalSpent: isCompletedPayment ? (existingMember.totalSpent || 0) + amount : existingMember.totalSpent,
+        loyaltyPoints: isCompletedPayment ? (existingMember.loyaltyPoints || 0) + Math.floor(amount) : existingMember.loyaltyPoints,
+        lastVisit: getTodayUTC8(),
+        phone: existingMember.phone || custPhone,
+        email: existingMember.email || custEmail,
       };
-      setCustomers(prev => prev.map(c => c.id === updatedMember.id ? updatedMember : c));
+      setCustomers(prev => prev.map(c => (c.id === updatedMember.id ? updatedMember : c)));
       gasService.syncCustomer(updatedMember);
     }
   };
 
-  // Helper to seat guest, mark table occupied, auto create customer membership, and jump to table order
+  // Helper to seat guest, mark table occupied (including all merged tables used), auto create customer membership, and jump to table order
   const handleSeatGuest = (res: Reservation) => {
-    // 1. Mark table occupied
-    let targetTable = tables.find(
-      t =>
-        (res.tableId && (t.id === res.tableId || t.name === res.tableId)) ||
-        (res.tableName && (t.name === res.tableName || t.id === res.tableName))
+    // 1. Find all matching tables (supporting merged tables like "T1 + T2", comma separated, or pre-merged partners)
+    const matchingTables: Table[] = [];
+
+    if (res.tableName) {
+      const parts = res.tableName.split(/[\+,&/]/).map(s => s.trim().toLowerCase());
+      tables.forEach(t => {
+        if (
+          parts.includes(t.name.trim().toLowerCase()) ||
+          parts.includes(`table ${t.name}`.toLowerCase()) ||
+          parts.includes(`桌 ${t.name}`.toLowerCase())
+        ) {
+          if (!matchingTables.some(m => m.id === t.id)) {
+            matchingTables.push(t);
+          }
+        }
+      });
+    }
+
+    if (res.tableId) {
+      const ids = res.tableId.split(/[\+,]/).map(s => s.trim());
+      tables.forEach(t => {
+        if (ids.includes(t.id) || ids.includes(t.name)) {
+          if (!matchingTables.some(m => m.id === t.id)) {
+            matchingTables.push(t);
+          }
+        }
+      });
+    }
+
+    if (matchingTables.length === 0) {
+      const fallback = tables.find(t => t.status === 'Available');
+      if (fallback) matchingTables.push(fallback);
+    }
+
+    if (matchingTables.length === 0) {
+      alert(`Cannot seat reservation for ${res.customerName}: All tables are currently occupied!`);
+      return;
+    }
+
+    // Collect all table IDs involved (including any existing merged partner tables)
+    const allTableIdsToUpdate = new Set<string>();
+    matchingTables.forEach(t => {
+      allTableIdsToUpdate.add(t.id);
+      if (t.mergedWith) {
+        t.mergedWith.forEach(id => allTableIdsToUpdate.add(id));
+      }
+    });
+
+    const isMultipleTables = allTableIdsToUpdate.size > 1;
+
+    const updatedTables = tables.map(t => {
+      if (allTableIdsToUpdate.has(t.id)) {
+        const otherMergedIds = Array.from(allTableIdsToUpdate).filter(id => id !== t.id);
+        const updatedT: Table = {
+          ...t,
+          status: 'Occupied',
+          customerName: res.customerName,
+          reservationTime: res.time,
+          mergedWith: otherMergedIds.length > 0 ? otherMergedIds : t.mergedWith,
+        };
+        gasService.syncTable(updatedT);
+        return updatedT;
+      }
+      return t;
+    });
+
+    setTables(updatedTables);
+    const primaryTable = matchingTables[0];
+    logActivity(
+      'Seat Guest',
+      `Table ${primaryTable.name}${isMultipleTables ? ` (Merged ${allTableIdsToUpdate.size} tables)` : ''} marked Occupied for ${res.customerName}`
     );
 
-    if (!targetTable) {
-      targetTable = tables.find(t => t.status === 'Available') || tables[0];
-    }
+    // Automatically jump to primary table's order page
+    handleOpenTableOrder(primaryTable);
 
-    if (targetTable) {
-      const updatedTable: Table = {
-        ...targetTable,
-        status: 'Occupied',
-        customerName: res.customerName,
-      };
-      setTables(prev => prev.map(t => (t.id === targetTable!.id ? updatedTable : t)));
-      gasService.syncTable(updatedTable);
-      logActivity('Seat Guest', `Table ${updatedTable.name} marked Occupied for ${res.customerName}`);
-
-      // Automatically jump to that table's order page
-      handleOpenTableOrder(updatedTable);
-    }
-
-    // 2. Auto register membership if customer is not in system
-    ensureCustomerAccount(res.customerName, res.phone, res.email, 0, []);
+    // 2. Auto register membership if customer is not in system (don't increment visit until payment)
+    ensureCustomerAccount(res.customerName, res.phone, res.email, 0, [], false);
   };
 
   // Global Keyboard Shortcuts
@@ -655,34 +829,39 @@ export default function App() {
         // Flag remote hydration so autoSync doesn't trigger an immediate POST syncAll loop
         isHydratingRef.current = true;
 
-        if (parsed.reservations && parsed.reservations.length > 0) {
+        if (parsed.reservations !== undefined) {
           setReservations(prev => mergeById(parsed.reservations, prev));
         }
-        if (parsed.waitlist && parsed.waitlist.length > 0) {
+        if (parsed.waitlist !== undefined) {
           setWaitlist(prev => mergeById(parsed.waitlist, prev));
         }
-        if (parsed.orders && parsed.orders.length > 0) {
+        if (parsed.orders !== undefined) {
           setOrders(prev => mergeById(parsed.orders, prev));
         }
-        if (parsed.tables && parsed.tables.length > 0) {
+        if (parsed.tables !== undefined) {
           setTables(prev => mergeById(parsed.tables, prev));
         }
-        if (parsed.menuItems && parsed.menuItems.length > 0) {
+        if (parsed.menuItems !== undefined) {
           setMenuItems(prev => mergeById(parsed.menuItems, prev));
         }
-        if (parsed.customers && parsed.customers.length > 0) {
-          setCustomers(prev => mergeById(parsed.customers, prev));
+        if (parsed.customers !== undefined) {
+          const deletedSet = new Set(deletedCustomerIdsRef.current);
+          const filteredRemote = parsed.customers.filter((c: Customer) => c && c.id && !deletedSet.has(String(c.id)));
+          setCustomers(prev => {
+            const activePrev = prev.filter(c => !deletedSet.has(String(c.id)));
+            return mergeById(filteredRemote, activePrev);
+          });
         }
-        if (parsed.coupons && parsed.coupons.length > 0) {
+        if (parsed.coupons !== undefined) {
           setCoupons(prev => mergeById(parsed.coupons, prev));
         }
-        if (parsed.employees && parsed.employees.length > 0) {
+        if (parsed.employees !== undefined) {
           setEmployees(prev => mergeById(parsed.employees, prev));
         }
-        if (parsed.inventory && parsed.inventory.length > 0) {
+        if (parsed.inventory !== undefined) {
           setInventory(prev => mergeById(parsed.inventory, prev));
         }
-        if (parsed.activityLogs && parsed.activityLogs.length > 0) {
+        if (parsed.activityLogs !== undefined) {
           setActivityLogs(prev => mergeById(parsed.activityLogs, prev));
         }
         if (parsed.settings && Object.keys(parsed.settings).length > 0) {
@@ -785,39 +964,122 @@ export default function App() {
     const toTable = tables.find(t => t.id === toTableId);
 
     if (fromTable && toTable) {
+      const updatedFromTable: Table = {
+        ...fromTable,
+        status: 'Available',
+        currentOrderId: undefined,
+        customerName: undefined,
+        reservationTime: undefined,
+      };
+
+      const updatedToTable: Table = {
+        ...toTable,
+        status: 'Occupied',
+        currentOrderId: fromTable.currentOrderId,
+        customerName: fromTable.customerName,
+        reservationTime: fromTable.reservationTime,
+      };
+
+      setTables(prev =>
+        prev.map(t => {
+          if (t.id === fromTableId) return updatedFromTable;
+          if (t.id === toTableId) return updatedToTable;
+          return t;
+        })
+      );
+
       setOrders(prev =>
         prev.map(o => {
           if (o.tableId === fromTableId && o.status !== 'Completed') {
-            return { ...o, tableId: toTableId, tableName: toTable.name };
+            const updatedOrd = { ...o, tableId: toTableId, tableName: toTable.name };
+            gasService.syncOrder(updatedOrd);
+            return updatedOrd;
           }
           return o;
         })
       );
 
-      setTables(prev =>
-        prev.map(t => {
-          if (t.id === fromTableId) return { ...t, status: 'Available', currentOrderId: undefined, customerName: undefined, reservationTime: undefined };
-          if (t.id === toTableId) return { ...t, status: 'Occupied' };
-          return t;
-        })
-      );
+      gasService.syncTable(updatedFromTable);
+      gasService.syncTable(updatedToTable);
       logActivity('Transfer Table', `Transferred order from Table ${fromTable.name} to Table ${toTable.name}`);
     }
   };
 
   const handleMergeTables = (tableId1: string, tableId2: string) => {
-    setTables(prev =>
-      prev.map(t => {
-        if (t.id === tableId1) {
-          return {
-            ...t,
-            mergedWith: [...(t.mergedWith || []), tableId2],
-          };
-        }
-        return t;
-      })
+    const table1 = tables.find(t => t.id === tableId1);
+    const table2 = tables.find(t => t.id === tableId2);
+    if (!table1 || !table2) return;
+
+    // Collect all table IDs in this merged cluster
+    const allGroupIds = new Set<string>([
+      tableId1,
+      tableId2,
+      ...(table1.mergedWith || []),
+      ...(table2.mergedWith || []),
+    ]);
+
+    const sharedCustomer = table1.customerName || table2.customerName;
+    const sharedStatus: TableStatus = (table1.status === 'Occupied' || table2.status === 'Occupied')
+      ? 'Occupied'
+      : (table1.status === 'Reserved' || table2.status === 'Reserved')
+      ? 'Reserved'
+      : table1.status;
+    const sharedOrderId = table1.currentOrderId || table2.currentOrderId;
+    const sharedResTime = table1.reservationTime || table2.reservationTime;
+
+    const updatedTables = tables.map(t => {
+      if (allGroupIds.has(t.id)) {
+        const otherIds = Array.from(allGroupIds).filter(id => id !== t.id);
+        const updatedT: Table = {
+          ...t,
+          status: sharedStatus,
+          customerName: sharedCustomer || t.customerName,
+          currentOrderId: sharedOrderId || t.currentOrderId,
+          reservationTime: sharedResTime || t.reservationTime,
+          mergedWith: otherIds.length > 0 ? otherIds : undefined,
+        };
+        gasService.syncTable(updatedT);
+        return updatedT;
+      }
+      return t;
+    });
+
+    setTables(updatedTables);
+    logActivity(
+      'Merge Tables',
+      `Merged Table ${table1.name} with Table ${table2.name} (${allGroupIds.size} tables connected)`
     );
-    logActivity('Merge Tables', `Merged table ${tableId1} with table ${tableId2}`);
+  };
+
+  const handleUnmergeTable = (tableId: string) => {
+    const target = tables.find(t => t.id === tableId);
+    if (!target) return;
+
+    const partnerIds = target.mergedWith || [];
+
+    const updatedTables = tables.map(t => {
+      if (t.id === tableId) {
+        const updated: Table = {
+          ...t,
+          mergedWith: undefined,
+        };
+        gasService.syncTable(updated);
+        return updated;
+      }
+      if (partnerIds.includes(t.id)) {
+        const remaining = (t.mergedWith || []).filter(id => id !== tableId);
+        const updated: Table = {
+          ...t,
+          mergedWith: remaining.length > 0 ? remaining : undefined,
+        };
+        gasService.syncTable(updated);
+        return updated;
+      }
+      return t;
+    });
+
+    setTables(updatedTables);
+    logActivity('Unmerge Table', `Unmerged Table ${target.name} from group`);
   };
 
   const handleSaveOrder = (newOrder: Order): Order => {
@@ -833,27 +1095,19 @@ export default function App() {
         return updated;
       }
 
-      // 2. Check if there is an active UNPAID open order for the same table or customer
+      // 2. Check if there is an active UNPAID open order ONLY for the SAME table & same Dine-in type
       const existingUnpaidOrder = prev.find(o => {
         if (o.paymentStatus !== 'Unpaid' || o.status === 'Cancelled') return false;
 
-        // Match by tableId or tableName
+        // Takeaway and Delivery orders should never auto-merge with other orders
+        if (newOrder.type !== 'Dine-in' || o.type !== 'Dine-in') return false;
+
+        // Match by tableId or tableName for Dine-in
         if (newOrder.tableId && o.tableId === newOrder.tableId) return true;
         if (
           newOrder.tableName &&
           o.tableName &&
           newOrder.tableName.trim().toLowerCase() === o.tableName.trim().toLowerCase()
-        ) {
-          return true;
-        }
-
-        // Match by customerId or customerPhone if not default walk-in
-        if (newOrder.customerId && o.customerId === newOrder.customerId) return true;
-        if (
-          newOrder.customerPhone &&
-          newOrder.customerPhone.trim() !== '' &&
-          o.customerPhone &&
-          o.customerPhone.trim() === newOrder.customerPhone.trim()
         ) {
           return true;
         }
@@ -1020,6 +1274,9 @@ export default function App() {
 
       logActivity('Merge Orders', `Combined ${ordersToMerge.length} unpaid orders into #${primaryOrder.orderNumber}`);
       gasService.syncOrder(mergedOrder);
+      secondaryOrders.forEach(sec => {
+        gasService.deleteRow('Orders', sec.id);
+      });
 
       return result;
     });
@@ -1048,7 +1305,18 @@ export default function App() {
     setOrders(prev =>
       prev.map(o => {
         if (o.id === orderId) {
-          const updated = { ...o, status: newStatus, updatedAt: new Date().toISOString() };
+          let updatedItems = [...o.items];
+          if (newStatus === 'Cooking') {
+            updatedItems = updatedItems.map(i => (i.status === 'Pending' || !i.status ? { ...i, status: 'Cooking' } : i));
+          } else if (newStatus === 'Ready') {
+            updatedItems = updatedItems.map(i => (i.status === 'Cooking' ? { ...i, status: 'Ready' } : i));
+          } else if (newStatus === 'Served') {
+            updatedItems = updatedItems.map(i => (i.status === 'Ready' || i.status === 'Cooking' ? { ...i, status: 'Served' } : i));
+          }
+          const allServed = updatedItems.every(i => i.status === 'Served');
+          const finalStatus = allServed ? 'Served' : newStatus;
+
+          const updated = { ...o, items: updatedItems, status: finalStatus, updatedAt: new Date().toISOString() };
           gasService.syncOrder(updated);
           return updated;
         }
@@ -1058,6 +1326,12 @@ export default function App() {
     logActivity('Update Order Status', `Order ${orderId} moved to ${newStatus}`);
   };
 
+  const handleUpdateOrder = (updatedOrder: Order) => {
+    setOrders(prev => prev.map(o => (o.id === updatedOrder.id ? updatedOrder : o)));
+    gasService.syncOrder(updatedOrder);
+    logActivity('Update Order', `Order #${updatedOrder.orderNumber} updated`);
+  };
+
   const handleProceedToCheckout = (order: Order) => {
     setActiveOrderToCheckout(order);
     setActiveTab('checkout');
@@ -1065,9 +1339,37 @@ export default function App() {
 
   const handleCompletePayment = (
     orderId: string,
-    paymentDetails: { method: Order['paymentMethod']; cashReceived?: number; changeGiven?: number }
+    paymentDetails: {
+      method: Order['paymentMethod'];
+      cashReceived?: number;
+      changeGiven?: number;
+      pointsRedeemed?: number;
+      pointsDiscountAmount?: number;
+      couponCode?: string;
+      couponDiscountAmount?: number;
+      percentageDiscountAmount?: number;
+      promoDiscountAmount?: number;
+      appliedPromos?: AppliedPromo[];
+      discountPercentage?: number;
+      usedCouponIds?: string[];
+      totalDiscount?: number;
+      subtotal?: number;
+      customerName?: string;
+      customerPhone?: string;
+      customerId?: string;
+      finalTotalAmount?: number;
+      customerPointsBalance?: number;
+    }
   ) => {
     let targetOrder = orders.find(o => o.id === orderId);
+
+    const effectiveTotalAmount = paymentDetails.finalTotalAmount !== undefined
+      ? paymentDetails.finalTotalAmount
+      : (targetOrder ? targetOrder.totalAmount : 0);
+
+    const effectiveName = paymentDetails.customerName || targetOrder?.customerName || '';
+    const effectivePhone = paymentDetails.customerPhone || targetOrder?.customerPhone || '';
+    const effectiveCustId = paymentDetails.customerId || targetOrder?.customerId;
 
     setOrders(prev => {
       const found = prev.find(o => o.id === orderId);
@@ -1079,15 +1381,55 @@ export default function App() {
             status: 'Completed',
             paymentStatus: 'Paid',
             paymentMethod: paymentDetails.method,
+            customerName: effectiveName || o.customerName,
+            customerPhone: effectivePhone || o.customerPhone,
+            customerId: effectiveCustId || o.customerId,
+            subtotal: paymentDetails.subtotal !== undefined ? paymentDetails.subtotal : (o.subtotal || o.totalAmount),
+            totalAmount: effectiveTotalAmount,
+            discountAmount: paymentDetails.totalDiscount !== undefined ? paymentDetails.totalDiscount : o.discountAmount,
+            discountPercentage: paymentDetails.discountPercentage !== undefined ? paymentDetails.discountPercentage : o.discountPercentage,
+            pointsRedeemed: paymentDetails.pointsRedeemed !== undefined ? paymentDetails.pointsRedeemed : o.pointsRedeemed,
+            pointsDiscountAmount: paymentDetails.pointsDiscountAmount !== undefined ? paymentDetails.pointsDiscountAmount : o.pointsDiscountAmount,
+            couponCode: paymentDetails.couponCode || o.couponCode,
+            couponDiscountAmount: paymentDetails.couponDiscountAmount !== undefined ? paymentDetails.couponDiscountAmount : o.couponDiscountAmount,
+            percentageDiscountAmount: paymentDetails.percentageDiscountAmount !== undefined ? paymentDetails.percentageDiscountAmount : o.percentageDiscountAmount,
+            promoDiscountAmount: paymentDetails.promoDiscountAmount !== undefined ? paymentDetails.promoDiscountAmount : o.promoDiscountAmount,
+            appliedPromos: (paymentDetails.appliedPromos && paymentDetails.appliedPromos.length > 0) ? paymentDetails.appliedPromos : o.appliedPromos,
+            customerPointsBalance: paymentDetails.customerPointsBalance,
             updatedAt: new Date().toISOString(),
           };
-          logActivity('Complete Payment', `Order #${o.orderNumber} ($${o.totalAmount.toFixed(2)}) paid via ${paymentDetails.method}`);
+          logActivity('Complete Payment', `Order #${o.orderNumber} ($${updated.totalAmount.toFixed(2)}) paid via ${paymentDetails.method}`);
           gasService.syncOrder(updated);
           return updated;
         }
         return o;
       });
     });
+
+    // Mark used coupons as used
+    if (paymentDetails.usedCouponIds && paymentDetails.usedCouponIds.length > 0) {
+      setCoupons(prev =>
+        prev.map(cp => {
+          if (paymentDetails.usedCouponIds?.includes(cp.id)) {
+            return {
+              ...cp,
+              isUsed: true,
+              usedAt: new Date().toISOString(),
+              usedOnOrderNumber: targetOrder ? targetOrder.orderNumber : undefined,
+              usedDiscountAmount: cp.discountType === 'fixed' ? cp.discountValue : (targetOrder ? (targetOrder.subtotal * cp.discountValue) / 100 : 0),
+            };
+          }
+          return cp;
+        })
+      );
+    }
+
+    if (paymentDetails.couponCode) {
+      const codeUpper = paymentDetails.couponCode.trim().toUpperCase();
+      setStoreCoupons(prev =>
+        prev.map(c => (c.code.toUpperCase() === codeUpper ? { ...c, usageCount: (c.usageCount || 0) + 1 } : c))
+      );
+    }
 
     if (!targetOrder) return;
 
@@ -1114,27 +1456,79 @@ export default function App() {
       );
     }
 
-    // 2. Award Customer Loyalty Points and update Customer stats
-    const custName = targetOrder.customerName?.trim();
-    const custPhone = targetOrder.customerPhone?.trim();
-    const custId = targetOrder.customerId;
+    // 1b. Automatically label customer as 結束用餐 (Completed) in reservations upon checkout
+    const nowTaipeiHHMM = new Date().toLocaleTimeString('en-GB', {
+      timeZone: 'Asia/Taipei',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
 
-    if (custName && custName.toLowerCase() !== 'guest') {
-      const earnedPoints = Math.max(1, Math.floor(targetOrder.totalAmount));
-      const todayStr = new Date().toISOString().split('T')[0];
+    setReservations(prevRes =>
+      prevRes.map(res => {
+        const matchTable =
+          (targetOrder?.tableId && (res.tableId === targetOrder.tableId || res.tableName === targetOrder.tableId)) ||
+          (targetOrder?.tableName && (res.tableName?.trim().toLowerCase() === targetOrder.tableName.trim().toLowerCase() || res.tableId === targetOrder.tableName));
+        const matchCust =
+          (effectiveCustId && res.customerId === effectiveCustId) ||
+          (effectiveName && res.customerName?.trim().toLowerCase() === effectiveName.trim().toLowerCase() && effectiveName.trim().toLowerCase() !== 'guest');
+
+        if ((matchTable || matchCust) && res.status !== 'Completed' && res.status !== 'Cancelled') {
+          const formattedResTime = formatTimeUTC8(res.time);
+          const [startH, startM] = formattedResTime.split(':').map(Number);
+          const [endH, endM] = nowTaipeiHHMM.split(':').map(Number);
+          const computedMins = (endH - startH) * 60 + (endM - startM);
+          const actualDuration = computedMins > 0 ? computedMins : (res.durationMinutes || 90);
+
+          const updatedRes: Reservation = {
+            ...res,
+            status: 'Completed',
+            actualEndTime: nowTaipeiHHMM,
+            durationMinutes: actualDuration,
+            updatedAt: new Date().toISOString(),
+          };
+          gasService.syncReservation(updatedRes);
+          return updatedRes;
+        }
+        return res;
+      })
+    );
+
+    // 2. Award Customer Loyalty Points (and deduct redeemed points)
+    const custName = effectiveName.trim();
+    const custPhone = effectivePhone.trim();
+    const custId = effectiveCustId;
+
+    const isGenericGuestName = (name?: string) => {
+      if (!name) return true;
+      const lower = name.trim().toLowerCase();
+      return lower === '' || lower === 'guest' || lower === 'walk-in guest' || lower === '散客' || lower === '現場顧客' || lower === '內用賓客';
+    };
+
+    const hasValidCustomer = Boolean(
+      custId ||
+      (custPhone && custPhone.length >= 4) ||
+      (custName && !isGenericGuestName(custName))
+    );
+
+    if (hasValidCustomer) {
+      const moneySpent = Math.max(0, effectiveTotalAmount);
+      const earnedPoints = Math.max(1, Math.floor(moneySpent));
+      const redeemed = paymentDetails.pointsRedeemed || 0;
+      const todayStr = getTodayUTC8();
+      const nowIso = new Date().toISOString();
 
       setCustomers(prevCusts => {
-        const existingIndex = prevCusts.findIndex(
-          c =>
-            (custId && c.id === custId) ||
-            (custPhone && custPhone !== '' && c.phone === custPhone) ||
-            (custName && c.name.toLowerCase() === custName.toLowerCase())
-        );
+        const found = findExistingCustomer(prevCusts, { id: custId, name: custName, phone: custPhone });
+        const existingIndex = found ? prevCusts.findIndex(c => c.id === found.id) : -1;
+
+        let updatedCustomerList = [...prevCusts];
+        let updatedCustomerObj: Customer;
 
         if (existingIndex >= 0) {
           const existing = prevCusts[existingIndex];
-          const newPoints = (existing.loyaltyPoints || 0) + earnedPoints;
-          const newTotalSpent = (existing.totalSpent || 0) + targetOrder.totalAmount;
+          const newPoints = Math.max(0, (existing.loyaltyPoints || 0) - redeemed + earnedPoints);
+          const newTotalSpent = Math.round(((existing.totalSpent || 0) + moneySpent) * 100) / 100;
           const newVisitCount = (existing.visitCount || 0) + 1;
 
           let newTier = existing.tier;
@@ -1143,47 +1537,76 @@ export default function App() {
           else if (newPoints >= 200 || newTotalSpent >= 250) newTier = 'Silver';
           else newTier = 'Bronze';
 
-          const updatedCust: Customer = {
+          updatedCustomerObj = {
             ...existing,
+            name: custName && !isGenericGuestName(custName) ? custName : existing.name,
+            phone: custPhone || existing.phone || '',
             loyaltyPoints: newPoints,
             totalSpent: newTotalSpent,
             visitCount: newVisitCount,
             tier: newTier,
             lastVisit: todayStr,
-            phone: existing.phone || custPhone || '',
+            updatedAt: nowIso,
           };
 
-          gasService.syncCustomer(updatedCust);
-
-          const copy = [...prevCusts];
-          copy[existingIndex] = updatedCust;
-          return copy;
+          updatedCustomerList[existingIndex] = updatedCustomerObj;
         } else {
-          // Register new customer
-          const welcomeBonus = 100;
-          const totalPts = welcomeBonus + earnedPoints;
-          const newTotalSpent = targetOrder.totalAmount;
+          // Register new customer automatically
+          const welcomeBonus = 50;
+          const newPoints = Math.max(0, welcomeBonus - redeemed + earnedPoints);
+          const newTotalSpent = Math.round(moneySpent * 100) / 100;
 
           let tier: Customer['tier'] = 'Bronze';
-          if (totalPts >= 500 || newTotalSpent >= 600) tier = 'Gold';
-          else if (totalPts >= 200 || newTotalSpent >= 250) tier = 'Silver';
+          if (newPoints >= 1000 || newTotalSpent >= 1200) tier = 'VIP';
+          else if (newPoints >= 500 || newTotalSpent >= 600) tier = 'Gold';
+          else if (newPoints >= 200 || newTotalSpent >= 250) tier = 'Silver';
 
-          const newCust: Customer = {
+          // Try to look up email from linked reservations if available
+          const linkedRes = reservations.find(r => 
+            (custPhone && isPhoneMatch(r.phone, custPhone)) || 
+            (custName && !isGenericGuestName(custName) && r.customerName && r.customerName.trim().toLowerCase() === custName.toLowerCase())
+          );
+          const detectedEmail = linkedRes?.email || '';
+
+          updatedCustomerObj = {
             id: custId || 'cust-' + Date.now(),
-            name: custName,
+            name: custName && !isGenericGuestName(custName) ? custName : (custPhone ? `會員 (${custPhone})` : '新會員'),
             phone: custPhone || '',
-            email: '',
-            loyaltyPoints: totalPts,
+            email: detectedEmail,
+            loyaltyPoints: newPoints,
             visitCount: 1,
             totalSpent: newTotalSpent,
             tier: tier,
             favoriteDishes: [],
             lastVisit: todayStr,
+            updatedAt: nowIso,
           };
 
-          gasService.syncCustomer(newCust);
-          return [newCust, ...prevCusts];
+          updatedCustomerList = [updatedCustomerObj, ...prevCusts];
         }
+
+        gasService.syncCustomer(updatedCustomerObj);
+
+        // Update the order in state so its customerPointsBalance matches updatedCustomerObj.loyaltyPoints
+        setOrders(orderList =>
+          orderList.map(ord => {
+            if (ord.id === orderId) {
+              const updatedOrd: Order = {
+                ...ord,
+                customerId: updatedCustomerObj.id,
+                customerName: updatedCustomerObj.name,
+                customerPhone: updatedCustomerObj.phone || ord.customerPhone,
+                customerPointsBalance: updatedCustomerObj.loyaltyPoints,
+                updatedAt: nowIso,
+              };
+              gasService.syncOrder(updatedOrd);
+              return updatedOrd;
+            }
+            return ord;
+          })
+        );
+
+        return updatedCustomerList;
       });
     }
   };
@@ -1206,6 +1629,68 @@ export default function App() {
     });
     return Array.from(map.values());
   })();
+
+  const handleUpdateCustomer = (updatedCustomer: Customer) => {
+    setCustomers(prev => prev.map(c => (c.id === updatedCustomer.id ? updatedCustomer : c)));
+    gasService.syncCustomer(updatedCustomer);
+
+    const targetName = updatedCustomer.name;
+    const targetPhone = updatedCustomer.phone;
+
+    // Sync Tables
+    setTables(prev =>
+      prev.map(t => {
+        if (
+          t.customerName &&
+          (t.customerName === targetName ||
+            isSameCustomer({ name: t.customerName }, updatedCustomer))
+        ) {
+          return { ...t, customerName: targetName };
+        }
+        return t;
+      })
+    );
+
+    // Sync Orders
+    setOrders(prev =>
+      prev.map(o => {
+        if (
+          o.customerId === updatedCustomer.id ||
+          (o.customerPhone && isPhoneMatch(o.customerPhone, targetPhone)) ||
+          (o.customerName && isSameCustomer({ name: o.customerName, phone: o.customerPhone }, updatedCustomer))
+        ) {
+          return { ...o, customerName: targetName, customerPhone: targetPhone || o.customerPhone, customerId: updatedCustomer.id };
+        }
+        return o;
+      })
+    );
+
+    // Sync Reservations
+    setReservations(prev =>
+      prev.map(r => {
+        if (
+          (r.phone && isPhoneMatch(r.phone, targetPhone)) ||
+          (r.customerName && isSameCustomer({ name: r.customerName, phone: r.phone }, updatedCustomer))
+        ) {
+          return { ...r, customerName: targetName, phone: targetPhone || r.phone };
+        }
+        return r;
+      })
+    );
+
+    // Sync Waitlist
+    setWaitlist(prev =>
+      prev.map(w => {
+        if (
+          (w.phone && isPhoneMatch(w.phone, targetPhone)) ||
+          (w.customerName && isSameCustomer({ name: w.customerName, phone: w.phone }, updatedCustomer))
+        ) {
+          return { ...w, customerName: targetName, phone: targetPhone || w.phone };
+        }
+        return w;
+      })
+    );
+  };
 
   if (isCustomerMode) {
     return (
@@ -1255,7 +1740,19 @@ export default function App() {
               }
             }}
             onCreateAccount={newUser => {
-              setEmployees(prev => [...prev, newUser]);
+              const newEmp: Employee = {
+                id: newUser.id,
+                name: newUser.name,
+                role: newUser.role || 'Waiter',
+                email: newUser.email,
+                phone: '',
+                isClockedIn: false,
+                hourlyRate: 18.0,
+                shiftsThisWeek: 0,
+                pinCode: newUser.pin || '1234',
+              };
+              setEmployees(prev => [...prev, newEmp]);
+              gasService.syncEmployee(newEmp);
               setCurrentUser(newUser);
               setShowAuthModal(false);
               logActivity('Create Staff Account', `Registered staff ${newUser.name}`);
@@ -1276,6 +1773,7 @@ export default function App() {
             onClose={() => setShowMembershipModal(false)}
             customers={customers}
             coupons={coupons}
+            storeCoupons={storeCoupons}
             onUpdateCustomer={updatedCustomer => {
               setCustomers(prev => prev.map(c => (c.id === updatedCustomer.id ? updatedCustomer : c)));
             }}
@@ -1304,7 +1802,13 @@ export default function App() {
         settings={settings}
         pendingOrdersCount={orders.filter(o => o.status === 'Pending').length}
         kdsItemsCount={orders.filter(o => o.status === 'Cooking').length}
-        lowStockCount={inventory.filter(i => i.currentStock <= i.minStock).length}
+        lowStockCount={
+          inventory.filter(
+            i =>
+              (i.stockQuantity !== undefined ? i.stockQuantity : (i as any).currentStock || 0) <=
+              (i.minStockAlert !== undefined ? i.minStockAlert : (i as any).minStock || 0)
+          ).length
+        }
         userRole={currentUser?.role}
         currentUser={currentUser}
         onLogout={() => {
@@ -1429,12 +1933,16 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
             <FloorPlanView
               tables={tables}
               orders={orders}
+              customers={customers}
+              reservations={reservations}
               onUpdateTable={handleUpdateTable}
               onAddTable={handleAddTable}
               onDeleteTable={handleDeleteTable}
               onOpenTableOrder={handleOpenTableOrder}
               onTransferTableOrder={handleTransferTableOrder}
               onMergeTables={handleMergeTables}
+              onUnmergeTable={handleUnmergeTable}
+              onUpdateCustomer={handleUpdateCustomer}
             />
           )}
 
@@ -1477,6 +1985,7 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
                 gasService.syncCustomer(cust);
                 logActivity('Auto Membership', `Registered membership account for ${cust.name}`);
               }}
+              onUpdateCustomer={handleUpdateCustomer}
             />
           )}
 
@@ -1485,6 +1994,9 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
               orders={orders}
               tables={tables}
               settings={settings}
+              customers={customers}
+              onUpdateCustomer={handleUpdateCustomer}
+              onUpdateOrder={handleSaveOrder}
               onOpenReceiptModal={order => {
                 setActiveReceiptOrder(order);
               }}
@@ -1496,13 +2008,21 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
           )}
 
           {activeTab === 'kds' && (
-            <KitchenDisplayView orders={orders} settings={settings} onUpdateOrderStatus={handleUpdateOrderStatus} />
+            <KitchenDisplayView
+              orders={orders}
+              settings={settings}
+              onUpdateOrderStatus={handleUpdateOrderStatus}
+              onUpdateOrder={handleUpdateOrder}
+            />
           )}
 
           {activeTab === 'checkout' && (
             <CheckoutView
               orders={orders}
               customers={customers}
+              coupons={coupons}
+              storeCoupons={storeCoupons}
+              promoRules={promoRules}
               settings={settings}
               activeOrderToCheckout={activeOrderToCheckout}
               onCompletePayment={handleCompletePayment}
@@ -1516,7 +2036,9 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
               reservations={reservations}
               tables={tables}
               waitlist={waitlist}
+              customers={customers}
               onOpenTableOrder={handleOpenTableOrder}
+              onUpdateTable={handleUpdateTable}
               onAddReservation={res => {
                 setReservations(prev => [res, ...prev]);
                 ensureCustomerAccount(res.customerName, res.phone, res.email, 0, []);
@@ -1540,7 +2062,27 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
                 setReservations(prev =>
                   prev.map(r => {
                     if (r.id === resId) {
-                      const updated = { ...r, status };
+                      const nowHHMM = new Date().toLocaleTimeString('en-GB', {
+                        timeZone: 'Asia/Taipei',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                      });
+                      let durationMins = r.durationMinutes || 90;
+                      if (status === 'Completed') {
+                        const formattedResTime = formatTimeUTC8(r.time);
+                        const [startH, startM] = formattedResTime.split(':').map(Number);
+                        const [endH, endM] = nowHHMM.split(':').map(Number);
+                        const computed = (endH - startH) * 60 + (endM - startM);
+                        if (computed > 0) durationMins = computed;
+                      }
+
+                      const updated: Reservation = {
+                        ...r,
+                        status,
+                        actualEndTime: status === 'Completed' ? (r.actualEndTime || nowHHMM) : r.actualEndTime,
+                        durationMinutes: status === 'Completed' ? durationMins : r.durationMinutes,
+                      };
                       gasService.syncReservation(updated);
                       if (status === 'Seated') {
                         handleSeatGuest(updated);
@@ -1554,6 +2096,7 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
               }}
               onAddWaitlist={item => {
                 setWaitlist(prev => [item, ...prev]);
+                ensureCustomerAccount(item.customerName, item.phone, undefined, 0, []);
                 logActivity('Add Waitlist', `Added queue #${item.queueNumber} for ${item.customerName}`);
                 gasService.syncWaitlist(item);
               }}
@@ -1568,10 +2111,65 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
           {activeTab === 'customers' && (
             <CustomerView
               customers={customers}
+              orders={orders}
+              reservations={reservations}
               onAddCustomer={cust => {
                 setCustomers(prev => [cust, ...prev]);
                 logActivity('Add Customer', `Registered customer ${cust.name}`);
                 gasService.syncCustomer(cust);
+              }}
+              onUpdateCustomer={handleUpdateCustomer}
+              onDeleteCustomer={customerId => {
+                setDeletedCustomerIds(prev => Array.from(new Set([...prev, customerId])));
+                setCustomers(prev => prev.filter(c => c.id !== customerId));
+                gasService.deleteRow('Customers', customerId);
+                logActivity('Delete Customer', `Deleted customer profile ID ${customerId}`);
+              }}
+            />
+          )}
+
+          {activeTab === 'promos' && (
+            <PromosAndCouponsView
+              storeCoupons={storeCoupons}
+              promos={promoRules}
+              coupons={coupons}
+              customers={customers}
+              orders={orders}
+              onSaveStoreCoupon={newCpn => {
+                setStoreCoupons(prev => {
+                  const exists = prev.some(c => c.id === newCpn.id);
+                  if (exists) {
+                    return prev.map(c => (c.id === newCpn.id ? newCpn : c));
+                  }
+                  return [newCpn, ...prev];
+                });
+                logActivity('Save Store Coupon', `Saved coupon code "${newCpn.code}"`);
+              }}
+              onDeleteStoreCoupon={couponId => {
+                setStoreCoupons(prev => prev.filter(c => c.id !== couponId));
+                logActivity('Delete Store Coupon', `Deleted store coupon ID ${couponId}`);
+              }}
+              onSavePromo={newPromo => {
+                setPromoRules(prev => {
+                  const exists = prev.some(p => p.id === newPromo.id);
+                  if (exists) {
+                    return prev.map(p => (p.id === newPromo.id ? newPromo : p));
+                  }
+                  return [newPromo, ...prev];
+                });
+                logActivity('Save Promo Rule', `Saved automatic promo rule "${newPromo.title}"`);
+              }}
+              onDeletePromo={promoId => {
+                setPromoRules(prev => prev.filter(p => p.id !== promoId));
+                logActivity('Delete Promo Rule', `Deleted promo rule ID ${promoId}`);
+              }}
+              onIssueCoupon={newCoupon => {
+                setCoupons(prev => [newCoupon, ...prev]);
+                logActivity('Issue Coupon', `Issued coupon code "${newCoupon.code}"`);
+              }}
+              onDeleteCoupon={couponId => {
+                setCoupons(prev => prev.filter(c => c.id !== couponId));
+                logActivity('Delete Coupon', `Deleted coupon ID ${couponId}`);
               }}
             />
           )}
@@ -1586,17 +2184,23 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
                 gasService.syncInventory(item);
               }}
               onUpdateStock={(itemId, newStock) => {
+                const today = new Date().toISOString().split('T')[0];
+                const roundedStock = Number(Number(newStock).toFixed(2));
                 setInventory(prev =>
                   prev.map(i => {
                     if (i.id === itemId) {
-                      const updated = { ...i, currentStock: newStock };
+                      const updated = {
+                        ...i,
+                        stockQuantity: roundedStock,
+                        lastRestocked: today,
+                      };
                       gasService.syncInventory(updated);
                       return updated;
                     }
                     return i;
                   })
                 );
-                logActivity('Update Stock', `Item ${itemId} stock updated to ${newStock}`);
+                logActivity('Update Stock', `Item ${itemId} stock updated to ${roundedStock}`);
               }}
             />
           )}
@@ -1727,7 +2331,19 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
             }
           }}
           onCreateAccount={newUser => {
-            setEmployees(prev => [...prev, newUser]);
+            const newEmp: Employee = {
+              id: newUser.id,
+              name: newUser.name,
+              role: newUser.role || 'Waiter',
+              email: newUser.email,
+              phone: '',
+              isClockedIn: false,
+              hourlyRate: 18.0,
+              shiftsThisWeek: 0,
+              pinCode: newUser.pin || '1234',
+            };
+            setEmployees(prev => [...prev, newEmp]);
+            gasService.syncEmployee(newEmp);
             setCurrentUser(newUser);
             setShowAuthModal(false);
             logActivity('Create Staff Account', `Registered staff ${newUser.name}`);
@@ -1751,6 +2367,7 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
           onClose={() => setShowMembershipModal(false)}
           customers={customers}
           coupons={coupons}
+          storeCoupons={storeCoupons}
           onUpdateCustomer={updatedCustomer => {
             setCustomers(prev => prev.map(c => (c.id === updatedCustomer.id ? updatedCustomer : c)));
           }}

@@ -29,6 +29,7 @@ import {
   Users,
   Package,
   BarChart3,
+  Tag,
 } from 'lucide-react';
 import { RestaurantSettings, User, Role, ActiveTab, RolePermissions } from '../types';
 import { INITIAL_SETTINGS, DEFAULT_ROLE_PERMISSIONS } from '../data/mockData';
@@ -83,6 +84,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     { id: 'checkout', label: 'POS Cashier Checkout', desc: 'Process payments, cash register, discount coupons and receipt printing', icon: CreditCard },
     { id: 'reservations', label: 'Table Reservations', desc: 'Guest table booking management and customer seating', icon: Calendar },
     { id: 'customers', label: 'Customer Directory', desc: 'Customer CRM, loyalty points, coupons and visit logs', icon: Users },
+    { id: 'promos', label: 'Promos & Coupons', desc: 'Automatic combo rules, special deals and customer discount vouchers', icon: Tag },
     { id: 'inventory', label: 'Inventory & Stock', desc: 'Raw material stock management, ingredient alerts and supplier list', icon: Package },
     { id: 'staff', label: 'Staff Roster & Management', desc: 'Employee profiles, hourly wages, clock-in status and security PINs', icon: UserCheck },
     { id: 'logs', label: 'Staff Clock-In & Logs', desc: 'Clock in/out shift attendance and user activity audit logs', icon: Clock },

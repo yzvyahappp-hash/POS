@@ -40,14 +40,38 @@ export function getTodayUTC8(): string {
 }
 
 /**
- * Format any date input to 'YYYY-MM-DD' in UTC+8
+ * Format any date input to 'YYYY-MM-DD' in UTC+8 (Asia/Taipei)
  */
 export function formatDateUTC8(val?: string | number | Date | null): string {
   if (!val) return getTodayUTC8();
-  const str = String(val).trim();
 
-  // If contains a YYYY-MM-DD date pattern
-  const dateMatch = str.match(/(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})/);
+  if (val instanceof Date) {
+    if (!isNaN(val.getTime())) {
+      try {
+        return val.toLocaleDateString('en-CA', { timeZone: TIMEZONE_UTC8 });
+      } catch {
+        return val.toISOString().split('T')[0];
+      }
+    }
+  }
+
+  const str = String(val).trim();
+  if (!str) return getTodayUTC8();
+
+  // Parse ISO string or timestamp if it includes time component or ISO markers
+  if (str.includes('T') || str.includes('Z') || str.includes(':') || typeof val === 'number') {
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) {
+      try {
+        return parsed.toLocaleDateString('en-CA', { timeZone: TIMEZONE_UTC8 });
+      } catch {
+        return parsed.toISOString().split('T')[0];
+      }
+    }
+  }
+
+  // If already a plain date pattern like YYYY-MM-DD
+  const dateMatch = str.match(/^(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})/);
   if (dateMatch) {
     const y = dateMatch[1];
     const m = dateMatch[2].padStart(2, '0');
@@ -55,7 +79,6 @@ export function formatDateUTC8(val?: string | number | Date | null): string {
     return `${y}-${m}-${d}`;
   }
 
-  // Parse Date object or ISO string
   const parsed = new Date(str);
   if (!isNaN(parsed.getTime())) {
     try {
@@ -63,10 +86,6 @@ export function formatDateUTC8(val?: string | number | Date | null): string {
     } catch {
       return parsed.toISOString().split('T')[0];
     }
-  }
-
-  if (str.includes('T')) {
-    return str.split('T')[0];
   }
 
   return str;

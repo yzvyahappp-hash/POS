@@ -13,6 +13,7 @@ export type ActiveTab =
   | 'reservations'
   | 'customers'
   | 'inventory'
+  | 'promos'
   | 'staff'
   | 'logs'
   | 'analytics'
@@ -117,6 +118,14 @@ export interface Order {
   kitchenNotes?: string;
   discountPercentage: number;
   discountAmount: number;
+  pointsRedeemed?: number;
+  pointsDiscountAmount?: number;
+  couponCode?: string;
+  couponDiscountAmount?: number;
+  percentageDiscountAmount?: number;
+  promoDiscountAmount?: number;
+  appliedPromos?: AppliedPromo[];
+  customerPointsBalance?: number;
   taxRate: number;
   taxAmount: number;
   serviceChargeRate: number;
@@ -170,6 +179,9 @@ export interface CustomerCoupon {
   pointsSpent: number;
   redeemedAt: string;
   isUsed?: boolean;
+  usedAt?: string;
+  usedOnOrderNumber?: string;
+  usedDiscountAmount?: number;
 }
 
 export interface Customer {
@@ -185,6 +197,7 @@ export interface Customer {
   favoriteDishes?: string[];
   notes?: string;
   lastVisit?: string;
+  updatedAt?: string;
 }
 
 export interface InventoryItem {
@@ -262,3 +275,45 @@ export interface NotificationItem {
   timestamp: string;
   read: boolean;
 }
+
+export interface CategoryCondition {
+  category: string; // e.g. 'Mains', 'Drinks', 'Appetizers', 'Desserts'
+  minQuantity: number; // e.g. 1
+}
+
+export interface PromoRule {
+  id: string;
+  title: string; // e.g. "Mains + 2 Drinks Combo Special"
+  description: string; // e.g. "Order 1 Main Dish and 2 Drinks to get $3.00 off automatically"
+  code?: string; // Optional code if entered manually
+  isAutomatic: boolean; // Automatically evaluated if true
+  discountType: 'fixed' | 'percentage';
+  discountValue: number; // e.g. 3 ($3.00) or 10 (10%)
+  categoryConditions?: CategoryCondition[]; // e.g. [{ category: 'Mains', minQuantity: 1 }, { category: 'Drinks', minQuantity: 2 }]
+  minSubtotal?: number; // e.g. 50
+  requiredMenuItemIds?: string[];
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface AppliedPromo {
+  promoId: string;
+  title: string;
+  reason: string;
+  discountAmount: number;
+}
+
+export interface CouponCode {
+  id: string;
+  code: string; // e.g. "WELCOME10", "VIP20", "SUMMER15"
+  title: string; // e.g. "Welcome 10% Off", "VIP 20% Discount"
+  description?: string;
+  discountType: 'fixed' | 'percentage';
+  discountValue: number; // e.g. 10 ($10 or 10%)
+  minSubtotal?: number; // e.g. 25 ($25 minimum spend requirement)
+  usageCount: number; // Total times redeemed across orders
+  isActive: boolean;
+  validUntil?: string; // Optional expiry date string
+  createdAt: string;
+}
+
