@@ -13,6 +13,7 @@ import {
   DollarSign,
   Image as ImageIcon,
   Sliders,
+  RefreshCw,
 } from 'lucide-react';
 import { MenuItem, MenuItemAddOn } from '../types';
 import { useTranslation } from '../i18n/useTranslation';
@@ -24,6 +25,8 @@ interface MenuViewProps {
   onAddMenuItem: (item: MenuItem) => void;
   onUpdateMenuItem: (item: MenuItem) => void;
   onDeleteMenuItem: (id: string) => void;
+  onRefreshDatabase?: () => void;
+  isDatabaseLoaded?: boolean;
 }
 
 export const MenuView: React.FC<MenuViewProps> = ({
@@ -31,13 +34,24 @@ export const MenuView: React.FC<MenuViewProps> = ({
   onAddMenuItem,
   onUpdateMenuItem,
   onDeleteMenuItem,
+  onRefreshDatabase,
+  isDatabaseLoaded,
 }) => {
   const { lang, t } = useTranslation();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState<'items' | 'customizations'>('items');
   const [activeCategory, setActiveCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showItemModal, setShowItemModal] = useState<boolean>(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+
+  const handleSyncWithDB = async () => {
+    if (onRefreshDatabase) {
+      setIsRefreshing(true);
+      await Promise.resolve(onRefreshDatabase());
+      setTimeout(() => setIsRefreshing(false), 800);
+    }
+  };
 
   // Form State
   const [name, setName] = useState('');
@@ -163,6 +177,23 @@ export const MenuView: React.FC<MenuViewProps> = ({
               <span>{lang === 'zh-TW' ? '客製化與加料管理' : 'Customization Hub'}</span>
             </button>
           </div>
+
+          {/* Google Sheets Sync Button */}
+          {onRefreshDatabase && (
+            <button
+              onClick={handleSyncWithDB}
+              disabled={isRefreshing}
+              title="Fetch and reload latest dishes from Google Sheets DB"
+              className="flex items-center space-x-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 transition-all cursor-pointer disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-[#FF8A00]' : 'text-emerald-500'}`} />
+              <span>
+                {isRefreshing
+                  ? (lang === 'zh-TW' ? '同步資料庫中...' : 'Syncing...')
+                  : (lang === 'zh-TW' ? '同步 Google Sheets' : 'Sync DB')}
+              </span>
+            </button>
+          )}
 
           {viewMode === 'items' && (
             <button
@@ -422,15 +453,20 @@ export const MenuView: React.FC<MenuViewProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                  Description
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300">
+                    {lang === 'zh-TW' ? '料理描述與食材介紹 (Description)' : 'Dish Description & Ingredients'}
+                  </label>
+                  <span className="text-[10px] text-[#FF8A00] font-semibold">
+                    {lang === 'zh-TW' ? '同步存入 Google Sheets 資料庫' : 'Syncs to Sheets DB'}
+                  </span>
+                </div>
                 <textarea
-                  rows={2}
+                  rows={3}
                   value={description}
                   onChange={e => setDescription(e.target.value)}
-                  placeholder="Ingredients, preparation details..."
-                  className="w-full rounded-xl border border-gray-200 p-2.5 text-xs font-medium dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                  placeholder={lang === 'zh-TW' ? '請輸入料理詳細介紹、嚴選食材、風味特色（會同步顯示於公開官網與線上菜單，並支援中/日/英多語翻譯）' : 'Enter dish ingredients, preparation notes, and flavor profile (displays on public landing page with multi-language support)'}
+                  className="w-full rounded-xl border border-gray-200 p-2.5 text-xs font-medium dark:bg-gray-800 dark:border-gray-700 dark:text-white leading-relaxed"
                 />
               </div>
 

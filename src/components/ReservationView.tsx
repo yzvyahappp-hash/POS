@@ -28,6 +28,8 @@ import { PhoneKeypadInput } from './PhoneKeypad';
 import { Reservation, Table, WaitlistItem, Customer } from '../types';
 import { initialWaitlist } from '../data/mockData';
 import { gasService, formatReservationDate, formatReservationTime } from '../services/gasService';
+import { copyToClipboard } from '../utils/clipboard';
+import { safeGetItem, safeSetItem } from '../utils/storage';
 import {
   getTodayUTC8,
   formatDateUTC8,
@@ -285,22 +287,14 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
 
   // Walk-in Waitlist state
   const [localWaitlist, setLocalWaitlist] = useState<WaitlistItem[]>(() => {
-    const saved = localStorage.getItem('gbg_waitlist');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return initialWaitlist;
-      }
-    }
-    return initialWaitlist;
+    return safeGetItem('gbg_waitlist', initialWaitlist);
   });
 
   const waitlist = propsWaitlist || localWaitlist;
 
   useEffect(() => {
     if (!propsWaitlist) {
-      localStorage.setItem('gbg_waitlist', JSON.stringify(waitlist));
+      safeSetItem('gbg_waitlist', waitlist);
     }
   }, [waitlist, propsWaitlist]);
 
@@ -2402,7 +2396,7 @@ export const ReservationView: React.FC<ReservationViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText(selectedDetailReservation.phone);
+                      copyToClipboard(selectedDetailReservation.phone);
                       setReminderAlert(`已複製電話號碼: ${selectedDetailReservation.phone}`);
                       setTimeout(() => setReminderAlert(null), 3000);
                     }}

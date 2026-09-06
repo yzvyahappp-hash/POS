@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Award, Ticket, Gift, CheckCircle2, UserCheck, Star, Sparkles, Copy, ChevronRight, LogOut, Phone, Mail, User } from 'lucide-react';
 import { Customer, CustomerCoupon, CouponCode, RestaurantSettings } from '../types';
 import { gasService } from '../services/gasService';
+import { copyToClipboard as safeCopyToClipboard } from '../utils/clipboard';
 
 interface MembershipModalProps {
   isOpen: boolean;
@@ -233,7 +234,7 @@ export const MembershipModal: React.FC<MembershipModalProps> = ({
   };
 
   const copyToClipboard = (code: string) => {
-    navigator.clipboard.writeText(code);
+    safeCopyToClipboard(code);
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 2500);
   };

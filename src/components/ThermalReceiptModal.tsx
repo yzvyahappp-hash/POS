@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Printer, Copy, Check, X, Receipt as ReceiptIcon, ExternalLink } from 'lucide-react';
 import { Order, RestaurantSettings } from '../types';
+import { INITIAL_SETTINGS } from '../data/mockData';
 import {
   receiptService,
   HANDWRITING_FONT,
@@ -9,6 +10,7 @@ import {
   translatePaymentMethod,
   translatePaymentStatus,
 } from '../services/receiptService';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface ThermalReceiptModalProps {
   order: Order | null;
@@ -25,19 +27,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
 
-  const currentSettings: RestaurantSettings = settings || {
-    restaurantName: 'Grand Bistro & Grill 格蘭小酒館＆炭烤餐廳',
-    address: '桃園市桃園區中正路 368 號',
-    phone: '03-356-7284',
-    email: 'info@grandbistro.com',
-    currency: 'TWD',
-    taxRate: 8,
-    serviceChargeRate: 5,
-    receiptHeader: '感謝光臨 Grand Bistro 美食餐廳！',
-    receiptFooter: '歡迎再次光臨！顧客 Wi-Fi: BistroGuest2026',
-    tableCount: 16,
-    autoKdsSync: true,
-  };
+  const currentSettings: RestaurantSettings = settings || INITIAL_SETTINGS;
 
   React.useEffect(() => {
     if (isOpen && order) {
@@ -145,7 +135,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
     text += `========================================\n`;
     text += `${currentSettings.receiptFooter || '歡迎再次光臨！'}\n`;
 
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -360,7 +350,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
               </div>
               <div className="flex justify-between">
                 <span className="font-bold">付款狀態:</span>
-                <span className={order.paymentStatus === 'Paid' || order.paymentStatus === '已付款' ? 'font-bold uppercase text-emerald-800' : 'font-bold uppercase text-amber-800'}>
+                <span className={order.paymentStatus === 'Paid' ? 'font-bold uppercase text-emerald-800' : 'font-bold uppercase text-amber-800'}>
                   {formattedPayStatus}
                 </span>
               </div>

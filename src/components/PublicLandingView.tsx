@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Utensils,
   Calendar,
@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   QrCode,
   Check,
+  RefreshCw,
 } from 'lucide-react';
 import { MenuItem, Reservation, RestaurantSettings } from '../types';
 import { gasService } from '../services/gasService';
@@ -40,6 +41,8 @@ interface PublicLandingViewProps {
   onLaunchCustomerOrdering?: () => void;
   onOpenAuth?: () => void;
   onOpenMembership?: () => void;
+  onRefreshDatabase?: () => void;
+  isDatabaseLoaded?: boolean;
 }
 
 export const PublicLandingView: React.FC<PublicLandingViewProps> = ({
@@ -50,9 +53,27 @@ export const PublicLandingView: React.FC<PublicLandingViewProps> = ({
   onLaunchCustomerOrdering,
   onOpenAuth,
   onOpenMembership,
+  onRefreshDatabase,
+  isDatabaseLoaded,
 }) => {
   const { lang, changeLanguage } = useTranslation();
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [isRefreshingMenu, setIsRefreshingMenu] = useState(false);
+
+  // Auto-fetch fresh menu items from Google Sheets DB on mount
+  useEffect(() => {
+    if (onRefreshDatabase) {
+      onRefreshDatabase();
+    }
+  }, []);
+
+  const handleManualRefresh = async () => {
+    if (onRefreshDatabase) {
+      setIsRefreshingMenu(true);
+      await Promise.resolve(onRefreshDatabase());
+      setTimeout(() => setIsRefreshingMenu(false), 800);
+    }
+  };
 
   // Active Category Filter for Menu Showcase
   const [activeCategory, setActiveCategory] = useState<string>('All');
@@ -756,12 +777,29 @@ export const PublicLandingView: React.FC<PublicLandingViewProps> = ({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-4">
             <div>
-              <div className="inline-flex items-center space-x-2 rounded-full bg-amber-500/10 border border-amber-500/20 px-4 py-1 text-xs font-bold text-amber-400 mb-2">
-                <Flame className="h-3.5 w-3.5" />
-                <span>{lang === 'zh-TW' ? '主廚招牌推薦' : 'Signature Selection'}</span>
+              <div className="flex items-center space-x-2 mb-2">
+                <div className="inline-flex items-center space-x-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 px-3.5 py-1 text-xs font-bold text-amber-400">
+                  <Flame className="h-3.5 w-3.5" />
+                  <span>{lang === 'zh-TW' ? '主廚招牌推薦' : lang === 'ja' ? 'シェフ特選メニュー' : 'Signature Selection'}</span>
+                </div>
+                {onRefreshDatabase && (
+                  <button
+                    onClick={handleManualRefresh}
+                    disabled={isRefreshingMenu}
+                    title="Fetch latest dishes from Google Sheets DB"
+                    className="inline-flex items-center space-x-1 rounded-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-300 hover:text-white transition-all cursor-pointer disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isRefreshingMenu ? 'animate-spin text-amber-400' : 'text-emerald-400'}`} />
+                    <span>
+                      {isRefreshingMenu
+                        ? (lang === 'zh-TW' ? '正在載入雲端資料庫...' : lang === 'ja' ? 'DB同期中...' : 'Syncing DB...')
+                        : (lang === 'zh-TW' ? 'Google Sheets 即時菜單' : lang === 'ja' ? 'Google Sheets DB同期' : 'Live Sheets DB')}
+                    </span>
+                  </button>
+                )}
               </div>
               <h2 className="text-3xl sm:text-4xl font-black text-white">
-                {lang === 'zh-TW' ? '精緻菜單與料理圖鑑' : 'Our Recipe & Menu Catalog'}
+                {lang === 'zh-TW' ? '精緻菜單與料理圖鑑' : lang === 'ja' ? 'グランドメニュー・料理一覧' : 'Our Recipe & Menu Catalog'}
               </h2>
             </div>
 

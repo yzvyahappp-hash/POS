@@ -34,17 +34,20 @@ import {
 import { RestaurantSettings, User, Role, ActiveTab, RolePermissions } from '../types';
 import { INITIAL_SETTINGS, DEFAULT_ROLE_PERMISSIONS } from '../data/mockData';
 import { gasService, GOOGLE_APPS_SCRIPT_CODE, DEFAULT_GAS_URL } from '../services/gasService';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface SettingsViewProps {
   settings: RestaurantSettings;
   currentUser: User | null;
   onUpdateSettings: (settings: RestaurantSettings) => void;
+  onNavigateToGas?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings = INITIAL_SETTINGS,
   currentUser,
   onUpdateSettings,
+  onNavigateToGas,
 }) => {
   const safeSettings = settings || INITIAL_SETTINGS;
   const [restaurantName, setRestaurantName] = useState(safeSettings.restaurantName || 'ZestPOS');
@@ -165,11 +168,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       theme,
     };
     gasService.setScriptUrl(targetUrl);
+    gasService.syncSettings(updated);
     onUpdateSettings(updated);
   };
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
+    copyToClipboard(GOOGLE_APPS_SCRIPT_CODE);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2500);
   };

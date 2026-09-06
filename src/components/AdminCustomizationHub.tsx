@@ -250,6 +250,12 @@ export const AdminCustomizationHub: React.FC = () => {
             { id: 'drinks_ice', label: lang === 'zh-TW' ? '🧊 飲料冰量' : '🧊 Drink Ice' },
             { id: 'drinks_sugar', label: lang === 'zh-TW' ? '🍯 飲料甜度' : '🍯 Drink Sugar' },
             { id: 'drinks_milk', label: lang === 'zh-TW' ? '🥛 鮮奶更換' : '🥛 Milk Substitutes' },
+            { id: 'soup_dietary', label: lang === 'zh-TW' ? '🥣 湯品特製' : '🥣 Soup Dietary' },
+            { id: 'soup_addons', label: lang === 'zh-TW' ? '🥖 湯品加料' : '🥖 Soup Add-ons' },
+            { id: 'salad_dietary', label: lang === 'zh-TW' ? '🥗 沙拉特製' : '🥗 Salad Dietary' },
+            { id: 'salad_addons', label: lang === 'zh-TW' ? '🥑 沙拉加料' : '🥑 Salad Add-ons' },
+            { id: 'pasta_dietary', label: lang === 'zh-TW' ? '🍝 麵食特製' : '🍝 Pasta Dietary' },
+            { id: 'pasta_addons', label: lang === 'zh-TW' ? '🧀 麵食加料' : '🧀 Pasta Add-ons' },
             { id: 'dietary_savory', label: lang === 'zh-TW' ? '🌿 辛香料忌口' : '🌿 Dietary Exclusions' },
             { id: 'sauces', label: lang === 'zh-TW' ? '🥫 醬料調整' : '🥫 Sauces' },
             { id: 'toppings', label: lang === 'zh-TW' ? '🧀 付費豪華加料' : '🧀 Extra Toppings' },
@@ -616,9 +622,16 @@ export const AdminCustomizationHub: React.FC = () => {
                   <option value="drinks_ice">{lang === 'zh-TW' ? '🧊 飲料冰量 (只出現在飲品，不出現在主餐)' : 'Drinks Ice'}</option>
                   <option value="drinks_sugar">{lang === 'zh-TW' ? '🍯 飲料甜度 (只出現在飲品，不出現在主餐)' : 'Drinks Sugar'}</option>
                   <option value="drinks_milk">{lang === 'zh-TW' ? '🥛 鮮奶/植物奶更換 (出現在拿鐵/咖啡/奶茶)' : 'Drinks Milk Substitute'}</option>
+                  <option value="soup_dietary">{lang === 'zh-TW' ? '🥣 湯品特製忌口 (只出現在湯品類)' : 'Soup Dietary'}</option>
+                  <option value="soup_addons">{lang === 'zh-TW' ? '🥖 湯品專屬加料 (麵包丁/松露油/起司)' : 'Soup Add-ons'}</option>
+                  <option value="salad_dietary">{lang === 'zh-TW' ? '🥗 沙拉特製 (醬汁分裝/去麵包丁)' : 'Salad Dietary'}</option>
+                  <option value="salad_addons">{lang === 'zh-TW' ? '🥑 沙拉頂級蛋白質加料 (燻鮭魚/雞胸肉)' : 'Salad Add-ons'}</option>
+                  <option value="pasta_dietary">{lang === 'zh-TW' ? '🍝 麵食與燉飯特製 (低鈉/麵條軟硬度)' : 'Pasta Dietary'}</option>
+                  <option value="pasta_addons">{lang === 'zh-TW' ? '🧀 麵食專屬加料 (現刨帕瑪森/松露醬)' : 'Pasta Add-ons'}</option>
                   <option value="dietary_savory">{lang === 'zh-TW' ? '🌿 辛香料與忌口 (出現在所有主餐/前菜/炸物，甜點與飲料除外)' : 'Dietary Savory (All food except dessert/drink)'}</option>
                   <option value="sauces">{lang === 'zh-TW' ? '🥫 醬料與配醬調整' : 'Sauces'}</option>
                   <option value="toppings">{lang === 'zh-TW' ? '🧀 額外加料加配料' : 'Extra Toppings'}</option>
+                  <option value="all">{lang === 'zh-TW' ? '🌐 全品項適用' : 'Universal (All Items)'}</option>
                 </select>
               </div>
 

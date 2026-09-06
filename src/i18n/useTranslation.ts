@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Language, translations, Translations } from './translations';
+import { safeGetItem, safeSetItem } from '../utils/storage';
 
 const LANG_EVENT = 'pos_lang_changed';
 
 export function useTranslation() {
   const [lang, setLang] = useState<Language>(() => {
-    const saved = localStorage.getItem('pos_language');
-    return (saved === 'zh-TW' || saved === 'ja' || saved === 'en') ? saved : 'en';
+    const saved = safeGetItem<string>('pos_language', 'en');
+    return (saved === 'zh-TW' || saved === 'ja' || saved === 'en') ? (saved as Language) : 'en';
   });
 
   const changeLanguage = (newLang: Language) => {
     setLang(newLang);
-    localStorage.setItem('pos_language', newLang);
+    safeSetItem('pos_language', newLang);
     window.dispatchEvent(new CustomEvent(LANG_EVENT, { detail: newLang }));
   };
 
@@ -23,7 +24,7 @@ export function useTranslation() {
       }
     };
     const handleStorage = () => {
-      const saved = localStorage.getItem('pos_language');
+      const saved = safeGetItem<string>('pos_language', 'en');
       if (saved && (saved === 'zh-TW' || saved === 'ja' || saved === 'en')) {
         setLang(saved as Language);
       }

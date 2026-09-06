@@ -67,6 +67,7 @@ import { PromosAndCouponsView } from './components/PromosAndCouponsView';
 import { receiptService } from './services/receiptService';
 import { gasService, parseSheetsDataToState } from './services/gasService';
 import { getTodayUTC8, formatTimeUTC8 } from './utils/dateUtils';
+import { safeGetItem, safeSetItem, safeRemoveItem } from './utils/storage';
 
 const TAB_PATH_MAP: Record<ActiveTab, string> = {
   landing: '/',
@@ -350,7 +351,7 @@ export default function App() {
   // Navigation & Theme State
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => getTabFromURL());
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
-    return localStorage.getItem('pos_dark_mode') === 'true';
+    return safeGetItem<string>('pos_dark_mode', 'false') === 'true';
   });
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState<boolean>(false);
@@ -367,30 +368,17 @@ export default function App() {
     return params.get('table') || params.get('tablename');
   });
 
-  // Helper for safe localStorage parsing (BUG-016)
-  const safeParseLocalStorage = <T,>(key: string, fallback: T): T => {
-    try {
-      const saved = localStorage.getItem(key);
-      if (!saved) return fallback;
-      const parsed = JSON.parse(saved);
-      return parsed ?? fallback;
-    } catch (e) {
-      console.error(`Failed to parse localStorage key "${key}":`, e);
-      return fallback;
-    }
-  };
-
   // Auth & Membership State
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    return safeParseLocalStorage('pos_current_user', DEMO_USERS[0]);
+    return safeGetItem('pos_current_user', DEMO_USERS[0]);
   });
 
   // Sync currentUser changes to LocalStorage
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem('pos_current_user', JSON.stringify(currentUser));
+      safeSetItem('pos_current_user', currentUser);
     } else {
-      localStorage.removeItem('pos_current_user');
+      safeRemoveItem('pos_current_user');
     }
   }, [currentUser]);
 
@@ -398,36 +386,36 @@ export default function App() {
   const [showMembershipModal, setShowMembershipModal] = useState<boolean>(false);
 
   const [coupons, setCoupons] = useState<CustomerCoupon[]>(() => {
-    return safeParseLocalStorage('pos_coupons', INITIAL_COUPONS);
+    return safeGetItem('pos_coupons', INITIAL_COUPONS);
   });
 
   const [storeCoupons, setStoreCoupons] = useState<CouponCode[]>(() => {
-    return safeParseLocalStorage('pos_store_coupons', INITIAL_STORE_COUPONS);
+    return safeGetItem('pos_store_coupons', INITIAL_STORE_COUPONS);
   });
 
   const [promoRules, setPromoRules] = useState<PromoRule[]>(() => {
-    return safeParseLocalStorage('pos_promo_rules', INITIAL_PROMO_RULES);
+    return safeGetItem('pos_promo_rules', INITIAL_PROMO_RULES);
   });
 
   useEffect(() => {
-    localStorage.setItem('pos_coupons', JSON.stringify(coupons));
+    safeSetItem('pos_coupons', coupons);
   }, [coupons]);
 
   useEffect(() => {
-    localStorage.setItem('pos_store_coupons', JSON.stringify(storeCoupons));
+    safeSetItem('pos_store_coupons', storeCoupons);
   }, [storeCoupons]);
 
   useEffect(() => {
-    localStorage.setItem('pos_promo_rules', JSON.stringify(promoRules));
+    safeSetItem('pos_promo_rules', promoRules);
   }, [promoRules]);
 
   // Core POS Entity States with LocalStorage Persistence
   const [tables, setTables] = useState<Table[]>(() => {
-    return safeParseLocalStorage('pos_tables', INITIAL_TABLES);
+    return safeGetItem('pos_tables', INITIAL_TABLES);
   });
 
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
-    const saved: MenuItem[] = safeParseLocalStorage('pos_menu', INITIAL_MENU_ITEMS);
+    const saved: MenuItem[] = safeGetItem('pos_menu', INITIAL_MENU_ITEMS);
     const existingIds = new Set(saved.map(m => m.id));
     const missing = INITIAL_MENU_ITEMS.filter(m => !existingIds.has(m.id));
     let combined = missing.length > 0 ? [...saved, ...missing] : saved;
@@ -436,7 +424,7 @@ export default function App() {
       if (item.id === 'm-2' && (!item.image || item.image.includes('1604908176997'))) {
         return {
           ...item,
-          image: 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&w=600&q=80',
+          image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:And9GcQ5MgK342p2BuOQTWcOtpRfwow0fgxl5n1J05kl0SdtuA&s=10',
         };
       }
       if (item.id === 'm-3' && (!item.image || item.image.includes('1592417817098'))) {
@@ -447,74 +435,67 @@ export default function App() {
       }
       return item;
     });
-    localStorage.setItem('pos_menu', JSON.stringify(combined));
+    safeSetItem('pos_menu', combined);
     return combined;
   });
 
   const [orders, setOrders] = useState<Order[]>(() => {
-    return safeParseLocalStorage('pos_orders', INITIAL_ORDERS);
+    return safeGetItem('pos_orders', INITIAL_ORDERS);
   });
 
   const [reservations, setReservations] = useState<Reservation[]>(() => {
-    return safeParseLocalStorage('pos_reservations', INITIAL_RESERVATIONS);
+    return safeGetItem('pos_reservations', INITIAL_RESERVATIONS);
   });
 
   const [waitlist, setWaitlist] = useState<WaitlistItem[]>(() => {
-    return safeParseLocalStorage('gbg_waitlist', initialWaitlist);
+    return safeGetItem('gbg_waitlist', initialWaitlist);
   });
 
   useEffect(() => {
-    localStorage.setItem('gbg_waitlist', JSON.stringify(waitlist));
+    safeSetItem('gbg_waitlist', waitlist);
   }, [waitlist]);
 
   const [deletedCustomerIds, setDeletedCustomerIds] = useState<string[]>(() => {
-    return safeParseLocalStorage('pos_deleted_customer_ids', []);
+    return safeGetItem('pos_deleted_customer_ids', []);
   });
   const deletedCustomerIdsRef = useRef<string[]>(deletedCustomerIds);
   useEffect(() => {
     deletedCustomerIdsRef.current = deletedCustomerIds;
-    localStorage.setItem('pos_deleted_customer_ids', JSON.stringify(deletedCustomerIds));
+    safeSetItem('pos_deleted_customer_ids', deletedCustomerIds);
   }, [deletedCustomerIds]);
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
-    const loaded: Customer[] = safeParseLocalStorage('pos_customers', INITIAL_CUSTOMERS);
-    const deleted: string[] = safeParseLocalStorage('pos_deleted_customer_ids', []);
+    const loaded: Customer[] = safeGetItem('pos_customers', INITIAL_CUSTOMERS);
+    const deleted: string[] = safeGetItem('pos_deleted_customer_ids', []);
     const deletedSet = new Set(deleted);
     return loaded.filter((c: Customer) => c && c.id && !deletedSet.has(String(c.id)));
   });
 
   const [inventory, setInventory] = useState<InventoryItem[]>(() => {
-    return safeParseLocalStorage('pos_inventory', INITIAL_INVENTORY);
+    return safeGetItem('pos_inventory', INITIAL_INVENTORY);
   });
 
   const [suppliers] = useState<Supplier[]>(INITIAL_SUPPLIERS);
 
   const [employees, setEmployees] = useState<Employee[]>(() => {
-    return safeParseLocalStorage('pos_employees', INITIAL_EMPLOYEES);
+    return safeGetItem('pos_employees', INITIAL_EMPLOYEES);
   });
 
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => {
-    const logs: ActivityLog[] = safeParseLocalStorage('pos_activity_logs', INITIAL_ACTIVITY_LOGS);
+    const logs: ActivityLog[] = safeGetItem('pos_activity_logs', INITIAL_ACTIVITY_LOGS);
     const map = new Map<string, ActivityLog>();
     logs.forEach(l => {
       if (l && l.id && !map.has(String(l.id))) {
         map.set(String(l.id), l);
       }
     });
-    return Array.from(map.values());
+    return Array.from(map.values()).slice(0, 50);
   });
 
   const [settings, setSettings] = useState<RestaurantSettings>(() => {
-    try {
-      const saved = localStorage.getItem('pos_settings');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object') {
-          return { ...INITIAL_SETTINGS, ...parsed };
-        }
-      }
-    } catch {
-      // fallback if json parse fails
+    const saved = safeGetItem<RestaurantSettings | null>('pos_settings', null);
+    if (saved && typeof saved === 'object') {
+      return { ...INITIAL_SETTINGS, ...saved };
     }
     return INITIAL_SETTINGS;
   });
@@ -730,48 +711,49 @@ export default function App() {
       document.documentElement.classList.remove('dark');
       document.body.classList.remove('dark');
     }
-    localStorage.setItem('pos_dark_mode', String(isDarkMode));
+    safeSetItem('pos_dark_mode', String(isDarkMode));
   }, [isDarkMode]);
 
-  // Persist local state
+  // Persist local state safely without quota crashes
   useEffect(() => {
-    localStorage.setItem('pos_tables', JSON.stringify(tables));
+    safeSetItem('pos_tables', tables);
   }, [tables]);
 
   useEffect(() => {
-    localStorage.setItem('pos_menu', JSON.stringify(menuItems));
+    safeSetItem('pos_menu', menuItems);
   }, [menuItems]);
 
   useEffect(() => {
-    localStorage.setItem('pos_orders', JSON.stringify(orders));
+    safeSetItem('pos_orders', orders);
   }, [orders]);
 
   useEffect(() => {
-    localStorage.setItem('pos_reservations', JSON.stringify(reservations));
+    safeSetItem('pos_reservations', reservations);
   }, [reservations]);
 
   useEffect(() => {
-    localStorage.setItem('pos_customers', JSON.stringify(customers));
+    safeSetItem('pos_customers', customers);
   }, [customers]);
 
   useEffect(() => {
-    localStorage.setItem('pos_coupons', JSON.stringify(coupons));
+    safeSetItem('pos_coupons', coupons);
   }, [coupons]);
 
   useEffect(() => {
-    localStorage.setItem('pos_inventory', JSON.stringify(inventory));
+    safeSetItem('pos_inventory', inventory);
   }, [inventory]);
 
   useEffect(() => {
-    localStorage.setItem('pos_employees', JSON.stringify(employees));
+    safeSetItem('pos_employees', employees);
   }, [employees]);
 
   useEffect(() => {
-    localStorage.setItem('pos_activity_logs', JSON.stringify(activityLogs));
+    // Only store the 50 most recent activity logs to prevent quota bloat
+    safeSetItem('pos_activity_logs', activityLogs.slice(0, 50));
   }, [activityLogs]);
 
   useEffect(() => {
-    localStorage.setItem('pos_settings', JSON.stringify(settings));
+    safeSetItem('pos_settings', settings);
     if (settings.theme === 'dark' && !isDarkMode) {
       setIsDarkMode(true);
     } else if (settings.theme === 'light' && isDarkMode) {
@@ -791,7 +773,9 @@ export default function App() {
       action,
       details,
     };
-    setActivityLogs(prev => [newLog, ...prev.filter(l => l.id !== newLog.id)]);
+    // Cap memory activity logs to 100 entries
+    setActivityLogs(prev => [newLog, ...prev.filter(l => l.id !== newLog.id)].slice(0, 100));
+    gasService.syncActivityLog(newLog);
   };
 
   const handleTabChange = (tab: ActiveTab) => {
@@ -824,9 +808,10 @@ export default function App() {
     };
   }, []);
 
-  // Concurrent Request Locks
+  // Concurrent Request Locks & Tracking Refs
   const isFetchingRef = useRef(false);
   const isHydratingRef = useRef(false);
+  const initialFetchDoneRef = useRef(false);
 
   // Hydrate Database from Google Sheets / Cloud DB
   const fetchAndHydrateDatabase = async () => {
@@ -839,25 +824,25 @@ export default function App() {
       if (res.success && res.data) {
         const parsed = parseSheetsDataToState(res.data);
 
-        // Flag remote hydration so autoSync doesn't trigger an immediate POST syncAll loop
+        // Flag remote hydration so autoSync doesn't trigger a recursive sync loop
         isHydratingRef.current = true;
 
-        if (parsed.reservations !== undefined) {
+        if (parsed.reservations !== undefined && parsed.reservations.length > 0) {
           setReservations(prev => mergeById(parsed.reservations, prev));
         }
-        if (parsed.waitlist !== undefined) {
+        if (parsed.waitlist !== undefined && parsed.waitlist.length > 0) {
           setWaitlist(prev => mergeById(parsed.waitlist, prev));
         }
-        if (parsed.orders !== undefined) {
+        if (parsed.orders !== undefined && parsed.orders.length > 0) {
           setOrders(prev => mergeById(parsed.orders, prev));
         }
-        if (parsed.tables !== undefined) {
+        if (parsed.tables !== undefined && parsed.tables.length > 0) {
           setTables(prev => mergeById(parsed.tables, prev));
         }
-        if (parsed.menuItems !== undefined) {
-          setMenuItems(prev => mergeById(parsed.menuItems, prev));
+        if (parsed.menuItems !== undefined && parsed.menuItems.length > 0) {
+          setMenuItems(parsed.menuItems);
         }
-        if (parsed.customers !== undefined) {
+        if (parsed.customers !== undefined && parsed.customers.length > 0) {
           const deletedSet = new Set(deletedCustomerIdsRef.current);
           const filteredRemote = parsed.customers.filter((c: Customer) => c && c.id && !deletedSet.has(String(c.id)));
           setCustomers(prev => {
@@ -865,27 +850,37 @@ export default function App() {
             return mergeById(filteredRemote, activePrev);
           });
         }
-        if (parsed.coupons !== undefined) {
+        if (parsed.coupons !== undefined && parsed.coupons.length > 0) {
           setCoupons(prev => mergeById(parsed.coupons, prev));
         }
-        if (parsed.employees !== undefined) {
+        if (parsed.employees !== undefined && parsed.employees.length > 0) {
           setEmployees(prev => mergeById(parsed.employees, prev));
         }
-        if (parsed.inventory !== undefined) {
+        if (parsed.inventory !== undefined && parsed.inventory.length > 0) {
           setInventory(prev => mergeById(parsed.inventory, prev));
         }
-        if (parsed.activityLogs !== undefined) {
+        if (parsed.activityLogs !== undefined && parsed.activityLogs.length > 0) {
           setActivityLogs(prev => mergeById(parsed.activityLogs, prev));
         }
         if (parsed.settings && Object.keys(parsed.settings).length > 0) {
-          setSettings(prev => ({ ...prev, ...parsed.settings }));
+          setSettings(prev => {
+            // Only update if there are actual diffs to prevent reference instability
+            let hasDiff = false;
+            for (const key of Object.keys(parsed.settings)) {
+              if ((prev as any)[key] !== (parsed.settings as any)[key]) {
+                hasDiff = true;
+                break;
+              }
+            }
+            return hasDiff ? { ...prev, ...parsed.settings } : prev;
+          });
         }
 
         setIsDatabaseLoaded(true);
 
         setTimeout(() => {
           isHydratingRef.current = false;
-        }, 2000);
+        }, 1500);
       }
     } catch (err) {
       console.warn('Database fetch error:', err);
@@ -894,20 +889,15 @@ export default function App() {
     }
   };
 
-  // Fetch Database on Open & Poll every 30s for live multi-device database sync (only when tab is active)
+  // Fetch Database on initial App open once
   useEffect(() => {
-    fetchAndHydrateDatabase();
+    if (!initialFetchDoneRef.current) {
+      initialFetchDoneRef.current = true;
+      fetchAndHydrateDatabase();
+    }
+  }, []);
 
-    const interval = setInterval(() => {
-      if (!document.hidden) {
-        fetchAndHydrateDatabase();
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [settings.gasWebAppUrl]);
-
-  // Auto Sync to Google Sheets when local state changes (ONLY after database has loaded and NOT during remote hydration)
+  // Auto Sync to Google Sheets when primary POS records change (debounced 10s, non-intrusive)
   useEffect(() => {
     if (!isDatabaseLoaded && settings.gasWebAppUrl) return;
     if (isHydratingRef.current) return;
@@ -926,13 +916,14 @@ export default function App() {
             coupons,
             employees,
             activityLogs,
+            suppliers,
             settings,
           });
         }
-      }, 5000);
+      }, 10000);
       return () => clearTimeout(timer);
     }
-  }, [isDatabaseLoaded, orders, reservations, waitlist, menuItems, tables, inventory, customers, coupons, employees, settings]);
+  }, [isDatabaseLoaded, orders, reservations, waitlist, menuItems, tables, inventory, customers, coupons, employees, suppliers]);
 
   // Handler Functions
   const handleUpdateTable = (updatedTable: Table) => {
@@ -1424,13 +1415,15 @@ export default function App() {
       setCoupons(prev =>
         prev.map(cp => {
           if (paymentDetails.usedCouponIds?.includes(cp.id)) {
-            return {
+            const updatedCp = {
               ...cp,
               isUsed: true,
               usedAt: new Date().toISOString(),
               usedOnOrderNumber: targetOrder ? targetOrder.orderNumber : undefined,
               usedDiscountAmount: cp.discountType === 'fixed' ? cp.discountValue : (targetOrder ? (targetOrder.subtotal * cp.discountValue) / 100 : 0),
             };
+            gasService.syncCoupon(updatedCp);
+            return updatedCp;
           }
           return cp;
         })
@@ -1443,6 +1436,18 @@ export default function App() {
         prev.map(c => (c.code.toUpperCase() === codeUpper ? { ...c, usageCount: (c.usageCount || 0) + 1 } : c))
       );
     }
+
+    // Sync Payment Record to Payments sheet
+    gasService.syncPayment({
+      id: 'pay-' + (targetOrder?.id || orderId),
+      orderId: targetOrder?.id || orderId,
+      orderNumber: targetOrder?.orderNumber || '',
+      amount: effectiveTotalAmount,
+      method: paymentDetails.method || 'Cash',
+      discount: paymentDetails.totalDiscount || 0,
+      status: 'Success',
+      timestamp: new Date().toISOString(),
+    });
 
     if (!targetOrder) return;
 
@@ -1880,7 +1885,7 @@ if (
   allowedTabs = [...allowedTabs, 'receipts'];
 }
 
-const isCurrentTabAllowed = allowedTabs.includes(activeTab);
+const isCurrentTabAllowed = (activeTab as string) === 'landing' || (allowedTabs as string[]).includes(activeTab);
 
             if (!isCurrentTabAllowed) {
               return (
@@ -1915,7 +1920,7 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
 
             return (
               <>
-                {activeTab === 'landing' && (
+                {(activeTab as string) === 'landing' && (
             <PublicLandingView
               settings={settings}
               menuItems={menuItems}
@@ -1925,6 +1930,8 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
               }}
               onNavigateTab={setActiveTab}
               onLaunchCustomerOrdering={() => setIsCustomerMode(true)}
+              onRefreshDatabase={fetchAndHydrateDatabase}
+              isDatabaseLoaded={isDatabaseLoaded}
             />
           )}
 
@@ -1977,6 +1984,8 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
                 logActivity('Delete Menu Item', `Deleted menu item ${id}`);
                 gasService.deleteRow('Menu', id);
               }}
+              onRefreshDatabase={fetchAndHydrateDatabase}
+              isDatabaseLoaded={isDatabaseLoaded}
             />
           )}
 
@@ -2179,10 +2188,12 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
               onIssueCoupon={newCoupon => {
                 setCoupons(prev => [newCoupon, ...prev]);
                 logActivity('Issue Coupon', `Issued coupon code "${newCoupon.code}"`);
+                gasService.syncCoupon(newCoupon);
               }}
               onDeleteCoupon={couponId => {
                 setCoupons(prev => prev.filter(c => c.id !== couponId));
                 logActivity('Delete Coupon', `Deleted coupon ID ${couponId}`);
+                gasService.deleteRow('Coupons', couponId);
               }}
             />
           )}
@@ -2271,7 +2282,7 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
             />
           )}
 
-          {(activeTab === 'analytics' || activeTab === 'reports') && <AnalyticsView orders={orders} menuItems={menuItems} />}
+          {(activeTab === 'analytics' || (activeTab as string) === 'reports') && <AnalyticsView orders={orders} menuItems={menuItems} />}
 
           {activeTab === 'gas' && (
             <GoogleSheetsView
@@ -2334,7 +2345,7 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
             setCurrentUser(user);
             setShowAuthModal(false);
             logActivity('User Login', `Logged in as ${user.name} (${user.role})`);
-            if (activeTab === 'landing') {
+            if ((activeTab as string) === 'landing') {
               setActiveTab('dashboard');
               try {
                 window.history.pushState({}, '', '/dashboard');
@@ -2360,7 +2371,7 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
             setCurrentUser(newUser);
             setShowAuthModal(false);
             logActivity('Create Staff Account', `Registered staff ${newUser.name}`);
-            if (activeTab === 'landing') {
+            if ((activeTab as string) === 'landing') {
               setActiveTab('dashboard');
               try {
                 window.history.pushState({}, '', '/dashboard');
@@ -2383,14 +2394,17 @@ const isCurrentTabAllowed = allowedTabs.includes(activeTab);
           storeCoupons={storeCoupons}
           onUpdateCustomer={updatedCustomer => {
             setCustomers(prev => prev.map(c => (c.id === updatedCustomer.id ? updatedCustomer : c)));
+            gasService.syncCustomer(updatedCustomer);
           }}
           onAddCustomer={newCustomer => {
             setCustomers(prev => [newCustomer, ...prev]);
             logActivity('New Member Registration', `Registered member ${newCustomer.name}`);
+            gasService.syncCustomer(newCustomer);
           }}
           onAddCoupon={newCoupon => {
             setCoupons(prev => [newCoupon, ...prev]);
             logActivity('Redeem Loyalty Coupon', `Redeemed ${newCoupon.title} code ${newCoupon.code}`);
+            gasService.syncCoupon(newCoupon);
           }}
           settings={settings}
         />

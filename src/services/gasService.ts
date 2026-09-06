@@ -225,7 +225,8 @@ function doPost(e) {
         data.isAvailable !== false ? 'YES' : 'NO',
         data.isPopular ? 'YES' : 'NO',
         data.isCombo ? 'YES' : 'NO',
-        data.image || ''
+        data.image || '',
+        data.description || ''
       ]);
       return createJsonResponse({ status: 'success', menuItemId: data.id });
     }
@@ -281,6 +282,76 @@ function doPost(e) {
     if (action === 'sendReminder') {
       const sent = sendSingleReservationReminder(data);
       return createJsonResponse({ status: sent ? 'success' : 'failed', message: sent ? 'Reminder email sent' : 'Missing email or send error' });
+    }
+
+    // 12. Save / Append Activity Log
+    if (action === 'saveActivityLog') {
+      const logId = data.id || ('log-' + new Date().getTime() + '-' + Math.floor(Math.random() * 10000));
+      const targetTab = appendRowToActivityLogs([
+        logId,
+        data.timestamp || new Date().toISOString(),
+        data.user || 'System',
+        data.role || 'Staff',
+        data.action || '',
+        data.details || ''
+      ]);
+      return createJsonResponse({ status: 'success', logId: logId, sheet: targetTab });
+    }
+
+    // 13. Save / Update Coupon
+    if (action === 'saveCoupon') {
+      upsertRowToSheet('Coupons', 0, data.id, [
+        data.id,
+        data.customerId || '',
+        data.code || '',
+        data.title || '',
+        data.discountType || 'fixed',
+        Number(data.discountValue || 0),
+        Number(data.pointsSpent || 0),
+        data.redeemedAt || new Date().toISOString(),
+        data.isUsed ? 'YES' : 'NO'
+      ]);
+      return createJsonResponse({ status: 'success', couponId: data.id });
+    }
+
+    // 14. Save / Update Supplier
+    if (action === 'saveSupplier') {
+      const itemsStr = Array.isArray(data.itemsSupplied) ? data.itemsSupplied.join(', ') : (data.itemsSupplied || '');
+      upsertRowToSheet('Suppliers', 0, data.id, [
+        data.id,
+        data.name || '',
+        data.contactPerson || '',
+        data.phone || '',
+        data.email || '',
+        itemsStr
+      ]);
+      return createJsonResponse({ status: 'success', supplierId: data.id });
+    }
+
+    // 15. Save / Update Payment
+    if (action === 'savePayment') {
+      upsertRowToSheet('Payments', 0, data.id, [
+        data.id,
+        data.orderId || '',
+        data.orderNumber || '',
+        Number(data.amount || 0),
+        data.method || 'Cash',
+        Number(data.discount || 0),
+        data.status || 'Success',
+        data.timestamp || new Date().toISOString()
+      ]);
+      return createJsonResponse({ status: 'success', paymentId: data.id });
+    }
+
+    // 16. Save / Update Settings
+    if (action === 'saveSettings') {
+      if (data && typeof data === 'object') {
+        Object.keys(data).forEach(function(k) {
+          var val = typeof data[k] === 'object' ? JSON.stringify(data[k]) : String(data[k]);
+          upsertRowToSheet('Settings', 0, k, [k, val]);
+        });
+      }
+      return createJsonResponse({ status: 'success' });
     }
     
     return createJsonResponse({ status: 'success', message: 'Action executed: ' + action });
@@ -363,7 +434,7 @@ function initSheetHeaders(sheet, name) {
   const headersMap = {
     'Users': ['ID', 'Name', 'Email', 'Role', 'PIN', 'ClockedIn'],
     'Employees': ['ID', 'Name', 'Email', 'Role', 'Phone', 'HourlyRate', 'ShiftsThisWeek', 'ClockedIn', 'PIN'],
-    'Menu': ['ID', 'Name', 'Category', 'Price', 'Cost', 'Available', 'Popular', 'Combo', 'Image'],
+    'Menu': ['ID', 'Name', 'Category', 'Price', 'Cost', 'Available', 'Popular', 'Combo', 'Image', 'Description'],
     'Tables': ['ID', 'Number', 'Name', 'Seats', 'Status', 'Zone', 'X', 'Y', 'Shape', 'CurrentOrder', 'CustomerName'],
     'Orders': ['ID', 'OrderNumber', 'Type', 'Table', 'Customer', 'TotalAmount', 'Status', 'PaymentStatus', 'PaymentMethod', 'CreatedAt', 'CreatedBy', 'UpdatedAt'],
     'OrderItems': ['ID', 'OrderID', 'OrderNumber', 'MenuItemID', 'Name', 'Price', 'Quantity', 'Modifiers', 'Status'],
@@ -386,6 +457,8 @@ function initSheetHeaders(sheet, name) {
 function fetchAllSheetsData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const result = {};
+  const allSheets = ss.getSheets();
+
   SHEET_NAMES.forEach(function(name) {
     const sheet = ss.getSheetByName(name);
     if (sheet) {
@@ -401,6 +474,30 @@ function fetchAllSheetsData() {
       result[name] = formattedData;
     }
   });
+
+  // Handle auto-partitioned ActivityLogs sheets (ActivityLogs 2, ActivityLogs 3, etc.)
+  var activityLogsRows = result['ActivityLogs'] || [];
+  allSheets.forEach(function(sh) {
+    var sName = sh.getName();
+    if (/^ActivityLogs(\\s*\\d+)?$/i.test(sName) && sName !== 'ActivityLogs') {
+      var extraData = sh.getDataRange().getValues();
+      if (extraData && extraData.length > 1) {
+        var validExtraRows = extraData.slice(1).map(function(row) {
+          return row.map(function(cell) {
+            if (cell instanceof Date) {
+              return Utilities.formatDate(cell, "GMT+8", "yyyy-MM-dd'T'HH:mm:ss+08:00");
+            }
+            return cell;
+          });
+        });
+        activityLogsRows = activityLogsRows.concat(validExtraRows);
+      }
+    }
+  });
+  if (activityLogsRows.length > 0) {
+    result['ActivityLogs'] = activityLogsRows;
+  }
+
   return result;
 }
 
@@ -499,8 +596,43 @@ function appendRowToSheet(sheetName, rowData) {
   sheet.appendRow(rowData);
 }
 
+function appendRowToActivityLogs(rowData) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const MAX_ROWS_PER_SHEET = 3000;
+  
+  let targetSheetName = 'ActivityLogs';
+  let sheetIndex = 1;
+  let targetSheet = ss.getSheetByName(targetSheetName);
+
+  // Find the latest active partition or create a new one if it exceeds 3000 rows
+  while (true) {
+    let checkName = sheetIndex === 1 ? 'ActivityLogs' : ('ActivityLogs ' + sheetIndex);
+    let checkSheet = ss.getSheetByName(checkName);
+    
+    if (!checkSheet) {
+      targetSheet = ss.insertSheet(checkName);
+      initSheetHeaders(targetSheet, 'ActivityLogs');
+      targetSheetName = checkName;
+      break;
+    }
+    
+    // If the existing sheet has less than MAX_ROWS_PER_SHEET (including header), use it
+    if (checkSheet.getLastRow() < MAX_ROWS_PER_SHEET) {
+      targetSheet = checkSheet;
+      targetSheetName = checkName;
+      break;
+    }
+    
+    // Sheet has reached or exceeded 3000 rows -> check next partition
+    sheetIndex++;
+  }
+
+  targetSheet.appendRow(rowData);
+  return targetSheetName;
+}
+
 function logActivity(user, action, details) {
-  appendRowToSheet('ActivityLogs', [
+  appendRowToActivityLogs([
     'log-' + new Date().getTime() + '-' + Math.floor(Math.random() * 10000),
     new Date().toISOString(),
     user,
@@ -562,7 +694,7 @@ export function formatFullDataPayload(state: Record<string, any>): Record<string
   ];
 
   const menuRows = [
-    ['ID', 'Name', 'Category', 'Price', 'Cost', 'Available', 'Popular', 'Combo', 'Image'],
+    ['ID', 'Name', 'Category', 'Price', 'Cost', 'Available', 'Popular', 'Combo', 'Image', 'Description'],
     ...menuItems.map(m => [
       String(m.id || ''),
       String(m.name || ''),
@@ -572,7 +704,8 @@ export function formatFullDataPayload(state: Record<string, any>): Record<string
       m.isAvailable ? 'YES' : 'NO',
       m.isPopular ? 'YES' : 'NO',
       m.isCombo ? 'YES' : 'NO',
-      String(m.image || '')
+      String(m.image || ''),
+      String(m.description || '')
     ])
   ];
 
@@ -860,20 +993,61 @@ export function parseSheetsDataToState(sheetsData: Record<string, any[][]>): {
 
   // 2. Menu
   if (Array.isArray(sheetsData.Menu)) {
+    const headers = sheetsData.Menu.length > 0 ? (sheetsData.Menu[0] || []) : [];
     const rows = sheetsData.Menu.length > 1 ? sheetsData.Menu.slice(1) : [];
+    const idIdx = getColumnIndex(headers, ['id', '編號', '餐點編號']);
+    const nameIdx = getColumnIndex(headers, ['name', 'dishname', 'itemname', '菜名', '名稱', '餐點名稱', '品名']);
+    const catIdx = getColumnIndex(headers, ['category', '分類', '類別']);
+    const priceIdx = getColumnIndex(headers, ['price', '價格', '售價', '單價']);
+    const costIdx = getColumnIndex(headers, ['cost', '成本']);
+    const availIdx = getColumnIndex(headers, ['available', 'isavailable', 'status', '供應', '上架', '狀態', '現貨']);
+    const popIdx = getColumnIndex(headers, ['popular', 'ispopular', '熱門', '招牌', '推薦']);
+    const comboIdx = getColumnIndex(headers, ['combo', 'iscombo', '套餐', '特惠']);
+    const imgIdx = getColumnIndex(headers, ['image', 'img', 'photo', 'picture', '圖片', '照片', '圖檔']);
+    const descIdx = getColumnIndex(headers, ['description', 'desc', '說明', '描述', '餐點描述', '料理簡介', '簡介', '備註', '介紹']);
+
     result.menuItems = rows
-      .filter(r => r && r[0])
-      .map(r => ({
-        id: String(r[0]),
-        name: String(r[1] || ''),
-        category: String(r[2] || 'Main Course'),
-        price: parseFloat(r[3]) || 0,
-        cost: parseFloat(r[4]) || 0,
-        isAvailable: String(r[5]).toUpperCase() === 'YES' || String(r[5]) === 'true',
-        isPopular: String(r[6]).toUpperCase() === 'YES' || String(r[6]) === 'true',
-        isCombo: String(r[7]).toUpperCase() === 'YES' || String(r[7]) === 'true',
-        image: String(r[8] || ''),
-      }));
+      .filter(r => r && (r[0] || (nameIdx !== -1 && r[nameIdx])))
+      .map((r, i) => {
+        const id = idIdx !== -1 && r[idIdx] ? String(r[idIdx]) : String(r[0] || `m-${i + 1}`);
+        const name = nameIdx !== -1 && r[nameIdx] !== undefined ? String(r[nameIdx] || '') : String(r[1] || '');
+        const category = (catIdx !== -1 && r[catIdx] !== undefined ? String(r[catIdx] || 'Mains') : String(r[2] || 'Mains')) as any;
+        const rawPrice = priceIdx !== -1 && r[priceIdx] !== undefined ? r[priceIdx] : r[3];
+        const price = typeof rawPrice === 'number' ? rawPrice : parseFloat(String(rawPrice || '0').replace(/[^0-9.]/g, '')) || 0;
+        const rawCost = costIdx !== -1 && r[costIdx] !== undefined ? r[costIdx] : r[4];
+        const cost = typeof rawCost === 'number' ? rawCost : parseFloat(String(rawCost || '0').replace(/[^0-9.]/g, '')) || 0;
+        
+        const rawAvail = availIdx !== -1 && r[availIdx] !== undefined ? r[availIdx] : r[5];
+        const availStr = String(rawAvail || '').toUpperCase();
+        const isAvailable = rawAvail === undefined ? true : (availStr === 'YES' || availStr === 'TRUE' || availStr === '1' || availStr === '是' || availStr === '供應中' || availStr === '上架');
+
+        const rawPop = popIdx !== -1 && r[popIdx] !== undefined ? r[popIdx] : r[6];
+        const popStr = String(rawPop || '').toUpperCase();
+        const isPopular = popStr === 'YES' || popStr === 'TRUE' || popStr === '1' || popStr === '是' || popStr === '招牌';
+
+        const rawCombo = comboIdx !== -1 && r[comboIdx] !== undefined ? r[comboIdx] : r[7];
+        const comboStr = String(rawCombo || '').toUpperCase();
+        const isCombo = comboStr === 'YES' || comboStr === 'TRUE' || comboStr === '1' || comboStr === '是' || comboStr === '套餐';
+
+        const rawImg = imgIdx !== -1 && r[imgIdx] !== undefined ? r[imgIdx] : r[8];
+        const image = rawImg ? String(rawImg).trim() : '';
+
+        const rawDesc = descIdx !== -1 && r[descIdx] !== undefined ? r[descIdx] : r[9];
+        const description = rawDesc ? String(rawDesc).trim() : '';
+
+        return {
+          id,
+          name,
+          category,
+          price,
+          cost,
+          isAvailable,
+          isPopular,
+          isCombo,
+          image,
+          description,
+        };
+      });
   }
 
   // 3. Tables
@@ -1412,6 +1586,81 @@ export const gasService = {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ action: 'saveEmployee', data: employee }),
+      });
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  },
+
+  async syncActivityLog(log: any): Promise<{ success: boolean }> {
+    const targetUrl = activeScriptUrl || DEFAULT_GAS_URL;
+    if (!targetUrl) return { success: false };
+    try {
+      await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'saveActivityLog', data: log }),
+      });
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  },
+
+  async syncCoupon(coupon: any): Promise<{ success: boolean }> {
+    const targetUrl = activeScriptUrl || DEFAULT_GAS_URL;
+    if (!targetUrl) return { success: false };
+    try {
+      await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'saveCoupon', data: coupon }),
+      });
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  },
+
+  async syncSupplier(supplier: any): Promise<{ success: boolean }> {
+    const targetUrl = activeScriptUrl || DEFAULT_GAS_URL;
+    if (!targetUrl) return { success: false };
+    try {
+      await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'saveSupplier', data: supplier }),
+      });
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  },
+
+  async syncPayment(payment: any): Promise<{ success: boolean }> {
+    const targetUrl = activeScriptUrl || DEFAULT_GAS_URL;
+    if (!targetUrl) return { success: false };
+    try {
+      await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'savePayment', data: payment }),
+      });
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  },
+
+  async syncSettings(settings: any): Promise<{ success: boolean }> {
+    const targetUrl = activeScriptUrl || DEFAULT_GAS_URL;
+    if (!targetUrl) return { success: false };
+    try {
+      await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'saveSettings', data: settings }),
       });
       return { success: true };
     } catch {

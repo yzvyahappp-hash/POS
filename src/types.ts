@@ -72,7 +72,7 @@ export interface MenuItemAddOn {
 export interface MenuItem {
   id: string;
   name: string;
-  category: 'Starters' | 'Mains' | 'Drinks' | 'Desserts' | 'Fries' | 'Others';
+  category: 'Starters' | 'Mains' | 'Drinks' | 'Desserts' | 'Fries' | 'Combos' | 'Others';
   price: number;
   cost: number;
   image: string;
@@ -144,6 +144,7 @@ export interface Reservation {
   customerName: string;
   phone: string;
   email?: string;
+  customerId?: string;
   date: string; // YYYY-MM-DD
   time: string; // HH:mm
   partySize: number;
@@ -155,6 +156,7 @@ export interface Reservation {
   seatedAt?: string; // ISO String or HH:mm
   actualEndTime?: string; // ISO String or HH:mm if finished early
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface WaitlistItem {
@@ -252,7 +254,9 @@ export interface RestaurantSettings {
   restaurantName: string;
   logoUrl: string;
   phone: string;
+  email?: string;
   address: string;
+  currency?: string;
   currencySymbol: string;
   taxRate: number; // e.g. 8%
   serviceChargeRate: number; // e.g. 5%
@@ -262,6 +266,7 @@ export interface RestaurantSettings {
   receiptFooter: string;
   gasWebAppUrl: string; // Google Apps Script URL
   autoSyncToSheets: boolean;
+  autoKdsSync?: boolean;
   theme: 'light' | 'dark';
   cashInputMode?: 'typed' | 'keypad';
   rolePermissions?: RolePermissions;

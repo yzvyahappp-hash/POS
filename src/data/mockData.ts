@@ -165,7 +165,7 @@ export const initialMenuItems: MenuItem[] = [
     category: 'Starters',
     price: 14.00,
     cost: 4.50,
-    image: 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&w=600&q=80',
+    image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:And9GcQ5MgK342p2BuOQTWcOtpRfwow0fgxl5n1J05kl0SdtuA&s=10',
     description: '輕裹薄粉香炸深海魷魚圈，附特調大蒜蛋黃醬與鮮黃檸檬角。',
     isAvailable: true,
     modifiers: ['加大蒜蛋黃醬', '附辣味番茄醬', '加檸檬角'],

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Table, TableStatus, TableShape, FloorZone, Order, Customer, Reservation } from '../types';
+import { copyToClipboard } from '../utils/clipboard';
 import { useTranslation } from '../i18n/useTranslation';
 import { translateTableStatus } from '../utils/i18nHelpers';
 
@@ -941,7 +942,7 @@ export const FloorPlanView: React.FC<FloorPlanViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/?table=${qrModalTable.number}&tablename=${encodeURIComponent(qrModalTable.name)}`);
+                      copyToClipboard(`${window.location.origin}/?table=${qrModalTable.number}&tablename=${encodeURIComponent(qrModalTable.name)}`);
                       setCopiedLink(true);
                       setTimeout(() => setCopiedLink(false), 2000);
                     }}

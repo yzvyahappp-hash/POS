@@ -82,7 +82,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
 
       // Payment Status
       if (selectedStatus !== 'ALL') {
-        const isPaid = order.paymentStatus === 'Paid' || order.paymentStatus === '已付款';
+        const isPaid = order.paymentStatus === 'Paid';
         if (selectedStatus === 'PAID' && !isPaid) return false;
         if (selectedStatus === 'UNPAID' && isPaid) return false;
       }
@@ -98,7 +98,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
       // Order Type
       if (selectedOrderType !== 'ALL') {
         if (selectedOrderType === 'Dine-in' && order.type !== 'Dine-in') return false;
-        if (selectedOrderType === 'Takeout' && order.type !== 'Takeout') return false;
+        if ((selectedOrderType === 'Takeout' || selectedOrderType === 'Takeaway') && (order.type !== 'Takeaway' && (order.type as string) !== 'Takeout')) return false;
         if (selectedOrderType === 'Delivery' && order.type !== 'Delivery') return false;
       }
 
@@ -141,7 +141,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
   const stats = useMemo(() => {
     const totalCount = filteredOrders.length;
     const paidOrders = filteredOrders.filter(
-      o => o.paymentStatus === 'Paid' || o.paymentStatus === '已付款'
+      o => o.paymentStatus === 'Paid'
     );
     const paidCount = paidOrders.length;
     const totalRevenue = paidOrders.reduce((acc, o) => acc + (o.totalAmount || 0), 0);
@@ -156,7 +156,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     };
   }, [filteredOrders]);
 
-  const currencySymbol = settings.currency === 'TWD' ? '$' : '$';
+  const currencySymbol = settings.currencySymbol || '$';
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 p-4 sm:p-6 dark:bg-gray-950 min-h-screen">
@@ -448,7 +448,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                         })
                       : 'N/A';
 
-                    const isPaid = order.paymentStatus === 'Paid' || order.paymentStatus === '已付款';
+                    const isPaid = order.paymentStatus === 'Paid';
                     const formattedPayStatus = translatePaymentStatus(order.paymentStatus);
                     const formattedPayMethod = translatePaymentMethod(order.paymentMethod);
                     const formattedOrderType = translateOrderType(order.type);

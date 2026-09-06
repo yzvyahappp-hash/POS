@@ -21,7 +21,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from 'recharts';
-import { Table, Order, Reservation, MenuItem, RestaurantSettings } from '../types';
+import { Table, Order, Reservation, MenuItem, RestaurantSettings, ActiveTab } from '../types';
 import { INITIAL_SETTINGS } from '../data/mockData';
 import { useTranslation } from '../i18n/useTranslation';
 import { translateCategory, translateOrderStatus } from '../utils/i18nHelpers';
@@ -32,8 +32,8 @@ interface DashboardViewProps {
   reservations?: Reservation[];
   menuItems?: MenuItem[];
   settings?: RestaurantSettings;
-  onNavigateTab?: (tab: string) => void;
-  onNavigate?: (tab: string) => void;
+  onNavigateTab?: (tab: ActiveTab) => void;
+  onNavigate?: (tab: ActiveTab) => void;
   onNewOrder?: () => void;
   onOpenTableOrder?: (table: Table) => void;
 }
@@ -72,7 +72,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const safeMenuItems = menuItems || [];
   const safeSettings = settings || INITIAL_SETTINGS;
 
-  const navigateTab = (tab: string) => {
+  const navigateTab = (tab: ActiveTab) => {
     if (onNavigateTab) onNavigateTab(tab);
     else if (onNavigate) onNavigate(tab);
   };

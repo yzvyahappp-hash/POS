@@ -426,7 +426,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         appliedPromos: autoPromoResult.appliedPromos.length > 0 ? autoPromoResult.appliedPromos : selectedOrder.appliedPromos,
         totalAmount: finalTotalAmount < baseOrderTotal ? finalTotalAmount : selectedOrder.totalAmount,
         paymentStatus: isSuccess ? 'Paid' : (selectedOrder.paymentStatus || 'Unpaid'),
-        paymentMethod: isSuccess ? (paymentMethod || selectedOrder.paymentMethod || 'Cash') : (selectedOrder.paymentMethod || 'Unpaid'),
+        paymentMethod: isSuccess ? (paymentMethod || selectedOrder.paymentMethod || 'Cash') : selectedOrder.paymentMethod,
         status: isSuccess ? 'Completed' : selectedOrder.status,
       };
       receiptService.printReceipt(orderToPrint, settings);

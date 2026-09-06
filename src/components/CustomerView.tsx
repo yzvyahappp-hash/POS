@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Customer, Order, Reservation } from '../types';
 import { formatDateUTC8, getTodayUTC8 } from '../utils/dateUtils';
+import { copyToClipboard } from '../utils/clipboard';
 import {
   findDuplicateCustomerGroups,
   findExistingCustomer,
@@ -85,7 +86,7 @@ export const CustomerView: React.FC<CustomerViewProps> = ({
 
   const handleCopy = (text: string, label: string) => {
     if (!text) return;
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
     setCopiedText(label);
     setTimeout(() => setCopiedText(null), 2000);
   };

@@ -20,6 +20,7 @@ import {
 import { RestaurantSettings } from '../types';
 import { gasService, GOOGLE_APPS_SCRIPT_CODE, GAS_INDEX_HTML_TEMPLATE, DEFAULT_GAS_URL } from '../services/gasService';
 import { useTranslation } from '../i18n/useTranslation';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface GoogleSheetsViewProps {
   settings: RestaurantSettings;
@@ -43,7 +44,7 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
   const [copiedHtmlCode, setCopiedHtmlCode] = useState(false);
 
   const handleCopyHtmlCode = () => {
-    navigator.clipboard.writeText(GAS_INDEX_HTML_TEMPLATE);
+    copyToClipboard(GAS_INDEX_HTML_TEMPLATE);
     setCopiedHtmlCode(true);
     setTimeout(() => setCopiedHtmlCode(false), 2500);
   };
@@ -66,7 +67,7 @@ export const GoogleSheetsView: React.FC<GoogleSheetsViewProps> = ({
   };
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
+    copyToClipboard(GOOGLE_APPS_SCRIPT_CODE);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2500);
   };

@@ -21,6 +21,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { PromoRule, CustomerCoupon, Customer, CategoryCondition, CouponCode, Order } from '../types';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface PromosAndCouponsViewProps {
   storeCoupons: CouponCode[];
@@ -141,7 +142,7 @@ export const PromosAndCouponsView: React.FC<PromosAndCouponsViewProps> = ({
   };
 
   const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
+    copyToClipboard(code);
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 2000);
   };
